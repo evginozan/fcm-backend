@@ -1,0 +1,350 @@
+// MARK: - Model
+
+// Login için gönderilecek model
+struct LoginRequestModel: Codable {
+    let email: String
+    let password: String
+}
+
+// Login başarılı olduğunda dönen model
+struct LoginSuccessResponseModel: Codable {
+    let message: String
+    let mustChangePassword: Bool
+    let tempToken: String
+    let role: String
+}
+
+// Login başarısız olduğunda dönen model
+struct LoginFailureResponseModel: Codable {
+    let message: String
+}
+
+// MARK: - Service
+class APIService {
+    static let shared = APIService()
+    private let baseURL = "http://localhost:8001"
+    
+    func login(with credentials: LoginRequestModel, completion: @escaping (Result<LoginSuccessResponseModel, Error>) -> Void) {
+        guard let url = URL(string: "\(baseURL)/login") else {
+            completion(.failure(NSError(domain: "Invalid URL", code: 0)))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            let jsonData = try JSONEncoder().encode(credentials)
+            request.httpBody = jsonData
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error = error {
+                    completion(.failure(error))
+                    return
+                }
+                
+                guard let data = data else {
+                    completion(.failure(NSError(domain: "No data received", code: 0)))
+                    return
+                }
+                
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                    do {
+                        let failureResponse = try JSONDecoder().decode(LoginFailureResponseModel.self, from: data)
+                        let error = NSError(domain: failureResponse.message, code: httpResponse.statusCode)
+                        completion(.failure(error))
+                    } catch {
+                        completion(.failure(NSError(domain: "Login failed with status code: \(httpResponse.statusCode)", code: httpResponse.statusCode)))
+                    }
+                    return
+                }
+                
+                do {
+                    let successResponse = try JSONDecoder().decode(LoginSuccessResponseModel.self, from: data)
+                    completion(.success(successResponse))
+                } catch {
+                    completion(.failure(error))
+                }
+            }.resume()
+        } catch {
+            completion(.failure(error))
+        }
+    }
+}
+
+// MARK: - Controller
+class LoginViewController: UIViewController {
+    // MARK: - Properties
+    private let emailTextField = UITextField()
+    private let passwordTextField = UITextField()
+    private let loginButton = UIButton(type: .system)
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let messageLabel = UILabel()
+    
+    // MARK: - Lifecycle
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+    }
+    
+    // MARK: - UI Setup
+    private func setupUI() {
+        view.backgroundColor = .white
+        title = "Login"
+        
+        // Email TextField
+        emailTextField.placeholder = "Email"
+        emailTextField.borderStyle = .roundedRect
+        emailTextField.autocapitalizationType = .none
+        emailTextField.keyboardType = .emailAddress
+        emailTextField.autocorrectionType = .no
+        
+        // Password TextField
+        passwordTextField.placeholder = "Password"
+        passwordTextField.borderStyle = .roundedRect
+        passwordTextField.isSecureTextEntry = true
+        
+        // Login Button
+        loginButton.setTitle("Login", for: .normal)
+        loginButton.backgroundColor = .systemBlue
+        loginButton.setTitleColor(.white, for: .normal)
+        loginButton.layer.cornerRadius = 5
+        loginButton.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        
+        // Message Label
+        messageLabel.textAlignment = .center
+        messageLabel.numberOfLines = 0
+        messageLabel.textColor = .red
+        
+        // Activity Indicator
+        activityIndicator.hidesWhenStopped = true
+        
+        // Setup Layout
+        let stackView = UIStackView(arrangedSubviews: [
+            emailTextField,
+            passwordTextField,
+            loginButton,
+            messageLabel,
+            activityIndicator
+        ])
+        
+        stackView.axis = .vertical
+        stackView.spacing = 16
+        stackView.distribution = .fillEqually
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(stackView)
+        
+        NSLayoutConstraint.activate([
+            stackView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            emailTextField.heightAnchor.constraint(equalToConstant: 44),
+            passwordTextField.heightAnchor.constraint(equalToConstant: 44),
+            loginButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+    
+    // MARK: - Actions
+    @objc private func loginButtonTapped() {
+        guard let email = emailTextField.text, !email.isEmpty,
+              let password = passwordTextField.text, !password.isEmpty else {
+            messageLabel.text = "Email ve şifre alanlarını doldurunuz"
+            return
+        }
+        
+        startLoading()
+        
+        let credentials = LoginRequestModel(email: email, password: password)
+        
+        APIService.shared.login(with: credentials) { [weak self] result in
+            DispatchQueue.main.async {
+                self?.stopLoading()
+                
+                switch result {
+                case .success(let response):
+                    self?.messageLabel.textColor = .green
+                    self?.messageLabel.text = response.message
+                    
+                    if response.mustChangePassword {
+                        self?.showChangePasswordAlert()
+                    } else {
+                        // Kullanıcı rolüne göre farklı ekranlara yönlendirme
+                        self?.navigateBasedOnRole(role: response.role, token: response.tempToken)
+                    }
+                    
+                case .failure(let error):
+                    self?.messageLabel.textColor = .red
+                    self?.messageLabel.text = error.localizedDescription
+                }
+            }
+        }
+    }
+    
+    // MARK: - Helper Methods
+    private func startLoading() {
+        activityIndicator.startAnimating()
+        loginButton.isEnabled = false
+        messageLabel.text = ""
+    }
+    
+    private func stopLoading() {
+        activityIndicator.stopAnimating()
+        loginButton.isEnabled = true
+    }
+    
+    private func showChangePasswordAlert() {
+        let alert = UIAlertController(
+            title: "Şifre Değişikliği Gerekli",
+            message: "Güvenlik nedeniyle şifrenizi değiştirmeniz gerekmektedir.",
+            preferredStyle: .alert
+        )
+        
+        alert.addAction(UIAlertAction(title: "Tamam", style: .default, handler: { _ in
+            // Şifre değiştirme ekranına yönlendirme yapılabilir
+            let changePasswordVC = ChangePasswordViewController()
+            self.navigationController?.pushViewController(changePasswordVC, animated: true)
+        }))
+        
+        present(alert, animated: true)
+    }
+    
+    private func navigateBasedOnRole(role: String, token: String) {
+        // Kullanıcının rolüne göre farklı ekranlara yönlendirme
+        switch role.lowercased() {
+        case "admin":
+            let adminVC = AdminViewController()
+            navigateToNextScreen(adminVC, withToken: token)
+        case "user":
+            let userVC = UserViewController()
+            navigateToNextScreen(userVC, withToken: token)
+        default:
+            let homeVC = HomeViewController()
+            navigateToNextScreen(homeVC, withToken: token)
+        }
+    }
+    
+    private func navigateToNextScreen(_ viewController: UIViewController, withToken token: String) {
+        // Token'ı UserDefaults'a kaydetme
+        UserDefaults.standard.set(token, forKey: "authToken")
+        
+        // View controller'a geçiş
+        if let navigationController = self.navigationController {
+            navigationController.pushViewController(viewController, animated: true)
+        } else {
+            viewController.modalPresentationStyle = .fullScreen
+            present(viewController, animated: true)
+        }
+    }
+}
+
+// MARK: - Mock View Controllers (Gerçek uygulamada ayrı dosyalarda olacak)
+class ChangePasswordViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Şifre Değiştir"
+        
+        let label = UILabel()
+        label.text = "Şifre değiştirme ekranı"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+}
+
+class AdminViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Admin Paneli"
+        
+        let label = UILabel()
+        label.text = "Admin ekranı"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+}
+
+class UserViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Kullanıcı Paneli"
+        
+        let label = UILabel()
+        label.text = "Kullanıcı ekranı"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+}
+
+class HomeViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        title = "Ana Sayfa"
+        
+        let label = UILabel()
+        label.text = "Ana sayfa ekranı"
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        
+        view.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+}
+
+// MARK: - AppDelegate ve SceneDelegate
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        return true
+    }
+
+    // MARK: UISceneSession Lifecycle
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = (scene as? UIWindowScene) else { return }
+        
+        window = UIWindow(windowScene: windowScene)
+        
+        let loginVC = LoginViewController()
+        let navigationController = UINavigationController(rootViewController: loginVC)
+        
+        window?.rootViewController = navigationController
+        window?.makeKeyAndVisible()
+    }
+}
