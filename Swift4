@@ -1,0 +1,698 @@
+import UIKit
+
+// MARK: - Models
+
+// Login isteği için model
+struct LoginRequest: Codable {
+    let email: String
+    let password: String
+}
+
+// İlk login yanıtı için model
+struct InitialLoginResponse: Codable {
+    let message: String
+    let mustChangePassword: Bool?
+    let tempToken: String?
+    let role: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case message
+        case mustChangePassword = "mustchangepassword"
+        case tempToken = "tempToken"
+        case role
+    }
+}
+
+// Şifre değiştirme isteği için model
+struct ChangePasswordRequest: Codable {
+    let oldPassword: String
+    let newPassword: String
+}
+
+// Şifre değiştirme yanıtı için model
+struct ChangePasswordResponse: Codable {
+    let message: String
+}
+
+// Final login yanıtı için model (şifre değiştirdikten sonra)
+struct FinalLoginResponse: Codable {
+    let message: String
+    let accessToken: String?
+    let refreshToken: String?
+    let role: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case message
+        case accessToken = "accessToken"
+        case refreshToken = "refreshToken"
+        case role
+    }
+}
+
+// Kullanıcı bilgilerini saklayan model
+struct User {
+    let role: String
+    let accessToken: String
+    let refreshToken: String
+}
+
+// MARK: - Constants & Utilities
+
+struct Constants {
+    struct UserDefaultsKeys {
+        static let accessToken = "accessToken"
+        static let refreshToken = "refreshToken"
+        static let userRole = "userRole"
+        static let tempToken = "tempToken"
+        static let userEmail = "userEmail"
+    }
+    
+    struct Roles {
+        static let mentor = "Mentör"
+        static let intern = "Stajyer"
+    }
+    
+    struct Colors {
+        static let primary = UIColor(red: 0/255, green: 123/255, blue: 255/255, alpha: 1)
+        static let error = UIColor(red: 220/255, green: 53/255, blue: 69/255, alpha: 1)
+        static let mentorBackground = UIColor(red: 0.9, green: 0.95, blue: 1.0, alpha: 1.0)
+        static let internBackground = UIColor(red: 0.95, green: 1.0, blue: 0.9, alpha: 1.0)
+    }
+}
+
+class UserDefaultsManager {
+    static let shared = UserDefaultsManager()
+    
+    private init() {}
+    
+    // Token işlemleri
+    func saveTempToken(_ token: String) {
+        UserDefaults.standard.set(token, forKey: Constants.UserDefaultsKeys.tempToken)
+    }
+    
+    func getTempToken() -> String? {
+        return UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.tempToken)
+    }
+    
+    func saveTokens(accessToken: String, refreshToken: String) {
+        UserDefaults.standard.set(accessToken, forKey: Constants.UserDefaultsKeys.accessToken)
+        UserDefaults.standard.set(refreshToken, forKey: Constants.UserDefaultsKeys.refreshToken)
+    }
+    
+    func getAccessToken() -> String? {
+        return UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.accessToken)
+    }
+    
+    func getRefreshToken() -> String? {
+        return UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.refreshToken)
+    }
+    
+    // Kullanıcı bilgileri
+    func saveUserRole(_ role: String) {
+        UserDefaults.standard.set(role, forKey: Constants.UserDefaultsKeys.userRole)
+    }
+    
+    func getUserRole() -> String? {
+        return UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.userRole)
+    }
+    
+    func saveUserEmail(_ email: String) {
+        UserDefaults.standard.set(email, forKey: Constants.UserDefaultsKeys.userEmail)
+    }
+    
+    func getUserEmail() -> String? {
+        return UserDefaults.standard.string(forKey: Constants.UserDefaultsKeys.userEmail)
+    }
+    
+    // Oturum temizleme
+    func clearUserSession() {
+        UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.accessToken)
+        UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.refreshToken)
+        UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.userRole)
+        UserDefaults.standard.removeObject(forKey: Constants.UserDefaultsKeys.tempToken)
+    }
+    
+    func isLoggedIn() -> Bool {
+        return getAccessToken() != nil
+    }
+}
+
+// MARK: - Network Services
+
+enum NetworkError: Error {
+    case invalidURL
+    case noData
+    case decodingError
+    case serverError(String)
+}
+
+class NetworkService {
+    static let shared = NetworkService()
+    
+    private let baseURL = "http://localhost:8001"
+    
+    private init() {}
+    
+    func request<T: Encodable, U: Decodable>(endpoint: String, 
+                                            method: String, 
+                                            body: T?, 
+                                            token: String? = nil,
+                                            completion: @escaping (Result<U, NetworkError>) -> Void) {
+        guard let url = URL(string: "\(baseURL)/\(endpoint)") else {
+            completion(.failure(.invalidURL))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        if let body = body {
+            do {
+                let jsonData = try JSONEncoder().encode(body)
+                request.httpBody = jsonData
+            } catch {
+                completion(.failure(.decodingError))
+                return
+            }
+        }
+        
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let data = data else {
+                completion(.failure(.noData))
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
+                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown server error"
+                completion(.failure(.serverError(errorMessage)))
+                return
+            }
+            
+            do {
+                let decodedResponse = try JSONDecoder().decode(U.self, from: data)
+                completion(.success(decodedResponse))
+            } catch {
+                print("Decoding error: \(error)")
+                completion(.failure(.decodingError))
+            }
+        }
+        
+        task.resume()
+    }
+}
+
+class AuthService {
+    static let shared = AuthService()
+    
+    private init() {}
+    
+    func login(email: String, password: String, completion: @escaping (Result<InitialLoginResponse, NetworkError>) -> Void) {
+        let loginRequest = LoginRequest(email: email, password: password)
+        
+        NetworkService.shared.request(
+            endpoint: "api/auth/login",
+            method: "POST",
+            body: loginRequest,
+            completion: completion
+        )
+    }
+    
+    func changePassword(oldPassword: String, newPassword: String, tempToken: String, completion: @escaping (Result<ChangePasswordResponse, NetworkError>) -> Void) {
+        let changePasswordRequest = ChangePasswordRequest(oldPassword: oldPassword, newPassword: newPassword)
+        
+        NetworkService.shared.request(
+            endpoint: "api/auth/change-password",
+            method: "POST",
+            body: changePasswordRequest,
+            token: tempToken,
+            completion: completion
+        )
+    }
+    
+    func loginWithNewPassword(email: String, newPassword: String, completion: @escaping (Result<FinalLoginResponse, NetworkError>) -> Void) {
+        let loginRequest = LoginRequest(email: email, password: newPassword)
+        
+        NetworkService.shared.request(
+            endpoint: "api/auth/login",
+            method: "POST",
+            body: loginRequest,
+            completion: completion
+        )
+    }
+}
+
+// MARK: - View Controllers
+
+class LoginViewController: UIViewController {
+    
+    // MARK: - UI Elements
+    private let emailTextField = UITextField()
+    private let passwordTextField = UITextField()
+    private let loginButton = UIButton(type: .system)
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let errorLabel = UILabel()
+    
+    // MARK: - Properties
+    private var isLoading = false {
+        didSet {
+            updateUI()
+        }
+    }
+    
+    // MARK: - Lifecycle Methods
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        clearFields()
+    }
+    
+    // MARK: - UI Setup
+    private func setupUI() {
+        title = "Giriş Yap"
+        view.backgroundColor = .white
+        
+        // Email TextField
+        emailTextField.placeholder = "Email"
+        emailTextField.keyboardType = .emailAddress
+        emailTextField.autocorrectionType = .no
+        emailTextField.autocapitalizationType = .none
+        emailTextField.borderStyle = .roundedRect
+        view.addSubview(emailTextField)
+        
+        // Password TextField
+        passwordTextField.placeholder = "Password"
+        passwordTextField.isSecureTextEntry = true
+        passwordTextField.borderStyle = .roundedRect
+        view.addSubview(passwordTextField)
+        
+        // Login Button
+        loginButton.setTitle("Giriş Yap", for: .normal)
+        loginButton.setTitleColor(.white, for: .normal)
+        loginButton.backgroundColor = Constants.Colors.primary
+        loginButton.layer.cornerRadius = 5
+        loginButton.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        view.addSubview(loginButton)
+        
+        // Error Label
+        errorLabel.textColor = Constants.Colors.error
+        errorLabel.textAlignment = .center
+        errorLabel.numberOfLines = 0
+        errorLabel.isHidden = true
+        view.addSubview(errorLabel)
+        
+        // Activity Indicator
+        activityIndicator.hidesWhenStopped = true
+        view.addSubview(activityIndicator)
+        
+        setupConstraints()
+        updateUI()
+    }
+    
+    private func setupConstraints() {
+        // UI elemanları için Auto Layout kısıtlamaları
+        emailTextField.translatesAutoresizingMaskIntoConstraints = false
+        passwordTextField.translatesAutoresizingMaskIntoConstraints = false
+        loginButton.translatesAutoresizingMaskIntoConstraints = false
+        errorLabel.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        
+        NSLayoutConstraint.activate([
+            // Email TextField
+            emailTextField.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 100),
+            emailTextField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
+            emailTextField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40),
+            emailTextField.heightAnchor.constraint(equalToConstant: 44),
+            
+            // Password TextField
+            passwordTextField.topAnchor.constraint(equalTo: emailTextField.bottomAnchor, constant: 20),
+            passwordTextField.leadingAnchor.constraint(equalTo: emailTextField.leadingAnchor),
+            passwordTextField.trailingAnchor.constraint(equalTo: emailTextField.trailingAnchor),
+            passwordTextField.heightAnchor.constraint(equalToConstant: 44),
+            
+            // Login Button
+            loginButton.topAnchor.constraint(equalTo: passwordTextField.bottomAnchor, constant: 30),
+            loginButton.leadingAnchor.constraint(equalTo: emailTextField.leadingAnchor),
+            loginButton.trailingAnchor.constraint(equalTo: emailTextField.trailingAnchor),
+            loginButton.heightAnchor.constraint(equalToConstant: 44),
+            
+            // Error Label
+            errorLabel.topAnchor.constraint(equalTo: loginButton.bottomAnchor, constant: 20),
+            errorLabel.leadingAnchor.constraint(equalTo: emailTextField.leadingAnchor),
+            errorLabel.trailingAnchor.constraint(equalTo: emailTextField.trailingAnchor),
+            
+            // Activity Indicator
+            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            activityIndicator.topAnchor.constraint(equalTo: errorLabel.bottomAnchor, constant: 20)
+        ])
+    }
+    
+    private func updateUI() {
+        DispatchQueue.main.async {
+            if self.isLoading {
+                self.activityIndicator.startAnimating()
+                self.loginButton.isEnabled = false
+                self.emailTextField.isEnabled = false
+                self.passwordTextField.isEnabled = false
+            } else {
+                self.activityIndicator.stopAnimating()
+                self.loginButton.isEnabled = true
+                self.emailTextField.isEnabled = true
+                self.passwordTextField.isEnabled = true
+            }
+        }
+    }
+    
+    private func clearFields() {
+        emailTextField.text = ""
+        passwordTextField.text = ""
+        errorLabel.isHidden = true
+    }
+    
+    private func showError(_ message: String) {
+        DispatchQueue.main.async {
+            self.errorLabel.text = message
+            self.errorLabel.isHidden = false
+        }
+    }
+    
+    // MARK: - Actions
+    @objc private func loginButtonTapped() {
+        guard let email = emailTextField.text, !email.isEmpty,
+              let password = passwordTextField.text, !password.isEmpty else {
+            showError("Email ve şifre alanlarını doldurunuz")
+            return
+        }
+        
+        // Email formatını kontrol et
+        if !isValidEmail(email) {
+            showError("Geçerli bir email adresi giriniz")
+            return
+        }
+        
+        performLogin(email: email, password: password)
+    }
+    
+    private func isValidEmail(_ email: String) -> Bool {
+        let emailRegEx = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailPred = NSPredicate(format:"SELF MATCHES %@", emailRegEx)
+        return emailPred.evaluate(with: email)
+    }
+    
+    private func performLogin(email: String, password: String) {
+        isLoading = true
+        errorLabel.isHidden = true
+        
+        // Email'i kaydet (şifre değiştirme ekranına yönlendirme durumunda kullanılacak)
+        UserDefaultsManager.shared.saveUserEmail(email)
+        
+        AuthService.shared.login(email: email, password: password) { [weak self] result in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                self.isLoading = false
+                
+                switch result {
+                case .success(let response):
+                    // Kullanıcıya mesaj göster
+                    print("Login response: \(response.message)")
+                    
+                    // Şifre değiştirme durumu kontrolü
+                    if let mustChangePassword = response.mustChangePassword, mustChangePassword {
+                        if let tempToken = response.tempToken {
+                            // Geçici token'ı sakla
+                            UserDefaultsManager.shared.saveTempToken(tempToken)
+                            
+                            // Şifre değiştirme ekranına yönlendir
+                            let changePasswordVC = ChangePasswordViewController()
+                            self.navigationController?.pushViewController(changePasswordVC, animated: true)
+                        } else {
+                            self.showError("Geçici token alınamadı")
+                        }
+                    } else if let role = response.role, let accessToken = response.tempToken {
+                        // Normal login başarılı ama bu ihtimal olmayacak çünkü 
+                        // ilk girişte mutlaka şifre değiştirilmesi gerektiğini belirtmişsiniz
+                        self.showError("Beklenmeyen durum: Şifre değiştirme ekranına yönlendirilmeliydiniz")
+                    } else {
+                        self.showError("Hatalı giriş bilgileri")
+                    }
+                    
+                case .failure(let error):
+                    switch error {
+                    case .serverError(let message):
+                        self.showError(message)
+                    default:
+                        self.showError("Giriş yapılırken bir hata oluştu. Lütfen tekrar deneyin.")
+                    }
+                }
+            }
+        }
+    }
+}
+
+class ChangePasswordViewController: UIViewController {
+    
+    // MARK: - UI Elements
+    private let oldPasswordTextField = UITextField()
+    private let newPasswordTextField = UITextField()
+    private let confirmPasswordTextField = UITextField()
+    private let changePasswordButton = UIButton(type: .system)
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let errorLabel = UILabel()
+    
+    // MARK: - Properties
+    private var isLoading = false {
+        didSet {
+            updateUI()
+        }
+    }
+    
+    // MARK: - Lifecycle Methods
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        setupUI()
+    }
+    
+    // MARK: - UI Setup
+    private func setupUI() {
+        title = "Şifre Değiştir"
+        view.backgroundColor = .white
+        
+        // Old Password TextField
+        oldPasswordTextField.placeholder = "Eski Şifre"
+        oldPasswordTextField.isSecureTextEntry = true
+        oldPasswordTextField.borderStyle = .roundedRect
+        view.addSubview(oldPasswordTextField)
+        
+        // New Password TextField
+        newPasswordTextField.placeholder = "Yeni Şifre"
+        newPasswordTextField.isSecureTextEntry = true
+        newPasswordTextField.borderStyle = .roundedRect
+        view.addSubview(newPasswordTextField)
+        
+        // Confirm Password TextField
+        confirmPasswordTextField.placeholder = "Yeni Şifre (Tekrar)"
+        confirmPasswordTextField.isSecureTextEntry = true
+        confirmPasswordTextField.borderStyle = .roundedRect
+        view.addSubview(confirmPasswordTextField)
+        
+        // Change Password Button
+        changePasswordButton.setTitle("Şifreyi Değiştir", for: .normal)
+        changePasswordButton.setTitleColor(.white, for: .normal)
+        changePasswordButton.backgroundColor = Constants.Colors.primary
+        changePasswordButton.layer.cornerRadius = 5
+        changePasswordButton.addTarget(self, action: #selector(changePasswordButtonTapped), for: .touchUpInside)
+        view.addSubview(changePasswordButton)
+        
+        // Error Label
+        errorLabel.textColor = Constants.Colors.error
+        errorLabel.textAlignment = .center
+        errorLabel.numberOfLines = 0
+        errorLabel.isHidden = true
+        view.addSubview(errorLabel)
+        
+        // Activity Indicator
+        activityIndicator.hidesWhenStopped = true
+        view.addSubview(activityIndicator)
+        
+        setupConstraints()
+        updateUI()
+    }
+    
+    private func setupConstraints() {
+        // UI elemanları için Auto Layout kısıtlamaları
+        oldPasswordTextField.translatesAutoresizingMaskIntoConstraints = false
+        newPasswordTextField.translatesAutoresizingMaskIntoConstraints = false
+        confirmPasswordTextField.translatesAutoresizingMaskIntoConstraints = false
+        changePasswordButton.translatesAutoresizingMaskIntoConstraints = false
+        errorLabel.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        
+        NSLayoutConstraint.activate([
+            // Old Password TextField
+            oldPasswordTextField.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 100),
+            oldPasswordTextField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
+            oldPasswordTextField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40),
+            oldP
+
+
+
+
+
+
+
+
+
+
+
+import UIKit
+
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Override point for customization after application launch.
+        return true
+    }
+
+    // MARK: UISceneSession Lifecycle
+
+    func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        // Called when a new scene session is being created.
+        // Use this method to select a configuration to create the new scene with.
+        return UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+
+    func application(_ application: UIApplication, didDiscardSceneSessions sceneSessions: Set<UISceneSession>) {
+        // Called when the user discards a scene session.
+        // If any sessions were discarded while the application was not running, this will be called shortly after application:didFinishLaunchingWithOptions.
+        // Use this method to release any resources that were specific to the discarded scenes, as they will not return.
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import UIKit
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = (scene as? UIWindowScene) else { return }
+        
+        let window = UIWindow(windowScene: windowScene)
+        self.window = window
+        
+        // Uygulama başlangıcında oturum kontrolü
+        if UserDefaultsManager.shared.isLoggedIn() {
+            // Kullanıcı giriş yapmış, rol kontrolü yap
+            if let role = UserDefaultsManager.shared.getUserRole() {
+                if role == Constants.Roles.mentor {
+                    let mentorVC = MentorViewController()
+                    let navigationController = UINavigationController(rootViewController: mentorVC)
+                    window.rootViewController = navigationController
+                } else if role == Constants.Roles.intern {
+                    let internVC = InternViewController()
+                    let navigationController = UINavigationController(rootViewController: internVC)
+                    window.rootViewController = navigationController
+                } else {
+                    setupLoginScreen(in: window)
+                }
+            } else {
+                setupLoginScreen(in: window)
+            }
+        } else {
+            setupLoginScreen(in: window)
+        }
+        
+        window.makeKeyAndVisible()
+    }
+    
+    private func setupLoginScreen(in window: UIWindow) {
+        let loginVC = LoginViewController()
+        let navigationController = UINavigationController(rootViewController: loginVC)
+        window.rootViewController = navigationController
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        // Called as the scene is being released by the system.
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // Called when the scene has moved from an inactive state to an active state.
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        // Called when the scene will move from an active state to an inactive state.
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        // Called as the scene transitions from the background to the foreground.
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        // Called as the scene transitions from the foreground to the background.
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Info.plist Düzenlemesi
+
+HTTP isteklerine izin verebilmek için Info.plist dosyasında düzenleme yapmanız gerekiyor. Xcode'da Info.plist dosyasını açın ve aşağıdaki adımları izleyin:
+
+1. Info.plist dosyasına sağ tıklayın ve "Open As" > "Source Code" seçeneğini seçin.
+
+2. `</dict>` kapanış etiketinden hemen önce aşağıdaki kodu ekleyin:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+</dict>
+```
+
+3. Dosyayı kaydedin.
+
+Alternatif olarak, Info.plist'i görsel editörde düzenlemek istiyorsanız:
+
+1. Dosyaya çift tıklayın (varsayılan editör açılır)
+2. Herhangi bir satıra sağ tıklayın ve "Add Row" seçeneğini seçin
+3. Açılan listeden "App Transport Security Settings" seçin
+4. Eklenen satırda + simgesine tıklayın ve "Allow Arbitrary Loads" seçin
+5. "Allow Arbitrary Loads" değerini YES olarak ayarlayın
