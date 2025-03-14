@@ -1,0 +1,83 @@
+import UIKit
+
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
+    
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        window = UIWindow(frame: UIScreen.main.bounds)
+        window?.rootViewController = ViewController()
+        window?.makeKeyAndVisible()
+        
+        return true
+    }
+}
+
+class ViewController: UIViewController {
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .white
+        
+        // Uygulama başladığında hemen POST isteği gönder
+        sendPostRequest()
+    }
+    
+    func sendPostRequest() {
+        // Endpoint URL
+        let urlString = "https://api.example.com/login"
+        guard let url = URL(string: urlString) else {
+            print("Geçersiz URL")
+            return
+        }
+        
+        // İstek parametreleri
+        let parameters = [
+            "username": "testuser",
+            "password": "password123"
+        ]
+        
+        // Request oluşturma
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        // Parametreleri JSON'a dönüştürme
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: parameters)
+            request.httpBody = jsonData
+        } catch {
+            print("JSON oluşturma hatası: \(error)")
+            return
+        }
+        
+        // İsteği gönderme
+        print("POST isteği gönderiliyor...")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Hata: \(error)")
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("Durum kodu: \(httpResponse.statusCode)")
+            }
+            
+            guard let data = data else {
+                print("Veri alınamadı")
+                return
+            }
+            
+            // JSON verisini konsola yazdırma
+            if let json = try? JSONSerialization.jsonObject(with: data) {
+                print("JSON yanıtı:")
+                print(json)
+            } else if let jsonString = String(data: data, encoding: .utf8) {
+                print("JSON yanıtı (String):")
+                print(jsonString)
+            }
+        }.resume()
+    }
+}
