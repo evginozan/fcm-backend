@@ -1,0 +1,52 @@
+import Foundation
+
+// JSON yanıtı için basit model
+struct LoginResponse: Codable {
+    let message: String
+    let role: String
+    let token: String
+    let mustChangePassword: Bool
+}
+
+// POST isteği gönder
+let url = URL(string: "https://api.example.com/login")!
+var request = URLRequest(url: url)
+request.httpMethod = "POST"
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+// İstek parametreleri
+let parameters = ["username": "test", "password": "123456"]
+request.httpBody = try? JSONSerialization.data(withJSONObject: parameters)
+
+// İsteği başlat
+let task = URLSession.shared.dataTask(with: request) { data, response, error in
+    // Hata kontrolü
+    if let error = error {
+        print("Hata: \(error)")
+        return
+    }
+    
+    // Veri kontrolü
+    guard let data = data else {
+        print("Veri yok")
+        return
+    }
+    
+    // JSON'ı model olarak çözmeyi dene
+    do {
+        let response = try JSONDecoder().decode(LoginResponse.self, from: data)
+        
+        // Konsola yazdır
+        print("Mesaj: \(response.message)")
+        print("Rol: \(response.role)")
+        print("Token: \(response.token)")
+        print("Şifre değişmeli mi: \(response.mustChangePassword)")
+    } catch {
+        // Çözülemezse ham JSON'ı yazdır
+        print("JSON çözme hatası: \(error)")
+        print("Ham JSON: \(String(data: data, encoding: .utf8) ?? "")")
+    }
+}
+
+// İsteği başlat
+task.resume()
