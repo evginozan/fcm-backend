@@ -1,24 +1,167 @@
-Bu hata, UIKit projelerinde Color türünden CGColor türüne dönüşüm hatası olarak görünüyor. SwiftUI'de Color objesi ile Core Graphics'in CGColor objesi arasında bir tip uyumsuzluğu var.
-
-SwiftUI'nin Color türü ve CoreGraphics'in CGColor türü arasında doğrudan dönüşüm yapmak için özel bir dönüşüm yöntemi kullanmak gerekiyor. SwiftUI'de Color direkt olarak CGColor'a dönüştürülemez.
-
-Bu hatayı çözmek için birkaç yöntem var:
-
-1. UIKit/AppKit köprüleme kullanarak dönüşüm yapmak
-2. Color extension kullanarak CGColor dönüşümü eklemek
-
-Code 789'uncu satırda muhtemelen SwiftUI'nin Color nesnesi, CoreGraphics bekleyen bir API'ye verilmeye çalışılıyor. Kodda nerede kullanıldığını görmeden spesifik çözüm önermek zor ama genel bir çözüm sunacağım.
-
-Bu hata, SwiftUI'nin `Color` türü ile Core Graphics'in `CGColor` türü arasındaki dönüşüm sorununu gösteriyor. SwiftUI'de `Color` nesneleri doğrudan `CGColor` olarak kullanılamaz.
-
-Sorunu çözmek için iki yöntem önerebilirim:
-
-### 1. Color'a CGColor dönüşümü için bir extension ekleyin:
-
-```swift
 import SwiftUI
 
+// MARK: - Color Scheme
+struct AppColors {
+    // Main colors
+    static let primary = Color(hex: "3F51B5") // Indigo
+    static let primaryDark = Color(hex: "303F9F")
+    static let secondary = Color(hex: "2196F3") // Blue
+    static let secondaryDark = Color(hex: "1976D2")
+    static let accent = Color(hex: "FF4081") // Pink
+    
+    // Surface colors
+    static let surface = Color.white
+    static let surfaceVariant = Color(hex: "F5F5F5") // Very light gray
+    static let background = Color(hex: "E0E0E0") // Light gray
+    
+    // Text colors
+    static let onPrimary = Color.white
+    static let onSurface = Color(hex: "212121") // Almost black
+    static let onSurfaceVariant = Color(hex: "757575") // Gray
+    static let onBackground = Color(hex: "212121") // Almost black
+    
+    // Status colors
+    static let success = Color(hex: "4CAF50") // Green
+    static let warning = Color(hex: "FF9800") // Orange
+    static let error = Color(hex: "F44336") // Red
+    static let info = Color(hex: "2196F3") // Blue
+    
+    // Card colors
+    static let card = Color.white
+    static let cardVariant = Color(hex: "FAFAFA") // Very light gray
+    
+    // Shadow color
+    static let shadow = Color.black.opacity(0.25)
+}
+
+// MARK: - Models
+struct InternshipInfo: Identifiable {
+    let id: Int
+    let internName: String
+    let internEmail: String
+    let department: String
+    let mentor: String
+    let mentorEmail: String
+    let startDate: String
+    let endDate: String
+    let remainingDays: Int
+    let completedDays: Int
+    let totalLeaveDays: Int
+}
+
+enum RequestStatus: String, Identifiable {
+    case pending = "BEKLEMEDE"
+    case approved = "ONAYLANDI"
+    case rejected = "REDDEDILDI"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .pending: return "Beklemede"
+        case .approved: return "Onaylandı"
+        case .rejected: return "Reddedildi"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .pending: return AppColors.warning
+        case .approved: return AppColors.success
+        case .rejected: return AppColors.error
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .pending: return "clock"
+        case .approved: return "checkmark.circle"
+        case .rejected: return "xmark.circle"
+        }
+    }
+}
+
+struct LeaveRequest: Identifiable {
+    let id: Int
+    let startDate: String
+    let endDate: String
+    let requestDate: String
+    let reason: String
+    let status: RequestStatus
+    let responseDate: String?
+}
+
+enum QuestionType {
+    case multipleChoice
+    case essay
+}
+
+struct SurveyQuestion: Identifiable {
+    let id: Int
+    let question: String
+    let type: QuestionType
+    let options: [String]
+    
+    init(id: Int, question: String, type: QuestionType, options: [String] = []) {
+        self.id = id
+        self.question = question
+        self.type = type
+        self.options = options
+    }
+}
+
+struct Survey: Identifiable {
+    let id: Int
+    let title: String
+    let description: String
+    let questions: [SurveyQuestion]
+    let creationDate: String
+    let dueDate: String
+}
+
+struct Announcement: Identifiable {
+    let id: Int
+    let title: String
+    let content: String
+    let date: String
+    let important: Bool
+}
+
+// MARK: - Navigation Items
+struct NavigationItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let icon: String
+    let tag: String
+}
+
+// MARK: - Extension for Color from hex
 extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (1, 1, 1, 0)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
+    
+    // CGColor dönüştürme eklentisi
     var cgColor: CGColor {
         #if canImport(UIKit)
         return UIColor(self).cgColor
@@ -29,24 +172,1409 @@ extension Color {
         #endif
     }
 }
-```
 
-Bu extension'ı projenize ekledikten sonra, SwiftUI Color nesnelerinizi şu şekilde kullanabilirsiniz:
+// MARK: - Main App Structure
+struct InternAppUI: View {
+    @State private var selectedTab = "anasayfa"
+    @State private var notificationCount = 2
+    
+    private let tabs = [
+        NavigationItem(title: "Anasayfa", icon: "house.fill", tag: "anasayfa"),
+        NavigationItem(title: "Stajım", icon: "graduationcap.fill", tag: "stajim"),
+        NavigationItem(title: "İzin Talep", icon: "calendar.badge.plus", tag: "izin_talep"),
+        NavigationItem(title: "Anket", icon: "chart.bar.fill", tag: "anket")
+    ]
+    
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "1A237E"),  // Dark blue
+                    Color(hex: "3949AB"),  // Blue
+                    Color(hex: "5C6BC0")   // Light blue
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            // Main content
+            VStack(spacing: 0) {
+                // Top navigation bar
+                HStack {
+                    // Dynamic title animation
+                    Text(tabs.first(where: { $0.tag == selectedTab })?.title ?? "")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                    
+                    Spacer()
+                    
+                    // Top bar action buttons
+                    HStack(spacing: 8) {
+                        // Notifications button
+                        ZStack(alignment: .topTrailing) {
+                            Button(action: {
+                                // Notification action
+                            }) {
+                                Image(systemName: "bell.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(AppColors.onPrimary)
+                                    .padding(6)
+                            }
+                            
+                            if notificationCount > 0 {
+                                Text("\(notificationCount)")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundColor(AppColors.onPrimary)
+                                    .padding(4)
+                                    .background(AppColors.accent)
+                                    .clipShape(Circle())
+                                    .offset(x: 8, y: -4)
+                            }
+                        }
+                        
+                        // Help button
+                        Button(action: {
+                            // Help action
+                        }) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 18))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(6)
+                        }
+                        
+                        // Settings button
+                        Button(action: {
+                            // Settings action
+                        }) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 18))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(6)
+                        }
+                        
+                        // Exit button
+                        Button(action: {
+                            // Exit action
+                        }) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 18))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(6)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                // Content area with tab views
+                TabView(selection: $selectedTab) {
+                    InternDashboardScreen()
+                        .tag("anasayfa")
+                    
+                    MyInternshipScreen()
+                        .tag("stajim")
+                    
+                    LeaveRequestScreen()
+                        .tag("izin_talep")
+                    
+                    SurveyListScreen()
+                        .tag("anket")
+                }
+                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                
+                // Bottom navigation bar
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        Button(action: {
+                            withAnimation {
+                                selectedTab = tab.tag
+                            }
+                        }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: tab.icon)
+                                    .font(.system(size: 20))
+                                
+                                Text(tab.title)
+                                    .font(.system(size: 12, weight: selectedTab == tab.tag ? .bold : .regular))
+                            }
+                            .foregroundColor(selectedTab == tab.tag ? AppColors.primary : AppColors.onSurfaceVariant)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                selectedTab == tab.tag ?
+                                AppColors.primaryDark.opacity(0.1) :
+                                Color.clear
+                            )
+                        }
+                    }
+                }
+                .background(AppColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: AppColors.shadow, radius: 10, x: 0, y: -5)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+}
 
-```swift
-// Örnek kullanım:
-let swiftuiColor = Color.red
-let cgColor = swiftuiColor.cgColor
-```
+// MARK: - Dashboard Screen
+struct InternDashboardScreen: View {
+    @State private var isWelcomeCardVisible = false
+    @State private var isTitleVisible = false
+    @State private var areCardsVisible = false
+    
+    let announcements = [
+        Announcement(id: 1, title: "Şirket Gezisi", content: "Bu ay sonu şirket pikniği yapılacaktır. Katılım formunu doldurmanızı rica ederiz.", date: "24.03.2025", important: true),
+        Announcement(id: 2, title: "Yeni Ofis Düzeni", content: "Önümüzdeki hafta itibarıyla yeni ofis düzenine geçilecektir.", date: "22.03.2025", important: false),
+        Announcement(id: 3, title: "Eğitim Programı", content: "Nisan ayı eğitim programı yayınlanmıştır. Takvimlerinizi kontrol ediniz.", date: "20.03.2025", important: true)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Welcome card
+                if isWelcomeCardVisible {
+                    VStack {
+                        InternWelcomeCard()
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                    .padding(.horizontal)
+                }
+                
+                // Announcements section
+                if isTitleVisible {
+                    Text("Duyurular")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                // Announcement cards with staggered animation
+                VStack(spacing: 16) {
+                    ForEach(Array(announcements.enumerated()), id: \.element.id) { index, announcement in
+                        if areCardsVisible {
+                            AnnouncementCard(announcement: announcement)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing)
+                                        .combined(with: .opacity)
+                                        .animation(.easeInOut.delay(Double(index) * 0.1)),
+                                    removal: .opacity
+                                ))
+                                .padding(.horizontal)
+                        }
+                    }
+                }
+                
+                Spacer(minLength: 80)
+            }
+            .padding(.top)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    isWelcomeCardVisible = true
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    isTitleVisible = true
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    areCardsVisible = true
+                }
+            }
+        }
+    }
+}
 
-### 2. Dönüşümü doğrudan ilgili yerde yapın:
+struct InternWelcomeCard: View {
+    // Sample progress calculation
+    let startDate = "01.06.2025" 
+    let endDate = "31.08.2025"
+    let progress: Float = 0.28 // This would be dynamically calculated in a real app
+    let remainingDays = 65
+    
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(AppColors.primary.opacity(0.9))
+                .shadow(color: AppColors.shadow, radius: 8, x: 0, y: 4)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Hoş Geldin,")
+                    .font(.system(size: 22))
+                    .fontWeight(.regular)
+                    .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                
+                Text("Ahmet Yılmaz")
+                    .font(.system(size: 28))
+                    .fontWeight(.bold)
+                    .foregroundColor(AppColors.onPrimary)
+                
+                Spacer(minLength: 16)
+                
+                // Internship progress section
+                Text("Staj Süreci")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(AppColors.onPrimary)
+                
+                // Progress bar
+                ProgressView(value: progress)
+                    .progressViewStyle(LinearProgressViewStyle(tint: AppColors.secondary))
+                    .background(AppColors.onPrimary.opacity(0.2))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .padding(.vertical, 8)
+                
+                // Dates
+                HStack {
+                    Text("Başlangıç: \(startDate)")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onPrimary)
+                    
+                    Spacer()
+                    
+                    Text("Bitiş: \(endDate)")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onPrimary)
+                }
+                
+                // Remaining days
+                Text("Kalan: \(remainingDays) gün")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(AppColors.onPrimary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.top, 4)
+            }
+            .padding(24)
+        }
+    }
+}
 
-```swift
-let swiftuiColor = Color.red
-let uiColor = UIColor(swiftuiColor)
-let cgColor = uiColor.cgColor
-```
+struct AnnouncementCard: View {
+    let announcement: Announcement
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack {
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(announcement.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(AppColors.onSurface)
+                        
+                        if announcement.important {
+                            Spacer(minLength: 8)
+                            
+                            Text("Önemli")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(AppColors.error)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(AppColors.error.opacity(0.1))
+                                .cornerRadius(4)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    
+                    Text(announcement.content)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                        .lineLimit(isExpanded ? nil : 2)
+                    
+                    Text(announcement.date)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .background(AppColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+    }
+}
 
-Bu hata, muhtemelen Shadow, Gradient, CALayer veya Core Graphics çizim API'lerini kullandığınız bir yerde meydana geliyor. Bu API'ler genellikle CGColor beklerken, kodunuzda doğrudan SwiftUI Color nesnesi verilmiş.
+// MARK: - My Internship Screen
+struct MyInternshipScreen: View {
+    @State private var entranceAnimationsFinished = false
+    
+    // Sample internship data
+    let internshipInfo = InternshipInfo(
+        id: 1,
+        internName: "Ahmet Yılmaz",
+        internEmail: "ahmet.yilmaz@example.com",
+        department: "Yazılım Geliştirme",
+        mentor: "Mehmet Öztürk",
+        mentorEmail: "mehmet.ozturk@havelsan.com.tr",
+        startDate: "01.06.2025",
+        endDate: "31.08.2025",
+        remainingDays: 65,
+        completedDays: 25,
+        totalLeaveDays: 3
+    )
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if entranceAnimationsFinished {
+                    // Internship info card
+                    InternshipInfoCard(info: internshipInfo)
+                        .padding(.horizontal)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+                
+                Spacer(minLength: 80)
+            }
+            .padding(.top)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
 
-Eğer hatanın tam olarak nerede olduğunu belirtirseniz, daha spesifik bir çözüm önerebilirim.
+struct InternshipInfoCard: View {
+    let info: InternshipInfo
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Staj Bilgileri")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(AppColors.onSurface)
+            
+            // Two column layout for info
+            HStack(alignment: .top, spacing: 12) {
+                // Left column
+                VStack(alignment: .leading, spacing: 12) {
+                    InfoRow(icon: "building.2", label: "Departman", value: info.department)
+                    InfoRow(icon: "person", label: "Mentor", value: info.mentor)
+                    InfoRow(icon: "envelope", label: "Mentor Email", value: info.mentorEmail)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // Right column
+                VStack(alignment: .leading, spacing: 12) {
+                    InfoRow(icon: "calendar", label: "Başlangıç", value: info.startDate)
+                    InfoRow(icon: "calendar.badge.clock", label: "Bitiş", value: info.endDate)
+                    InfoRow(icon: "timer", label: "Alınan İzin", value: "\(info.totalLeaveDays) gün")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            
+            // Progress section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Staj İlerlemesi")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(AppColors.onSurface)
+                
+                let totalDays = info.remainingDays + info.completedDays
+                let progress = Float(info.completedDays) / Float(totalDays)
+                
+                ProgressView(value: progress)
+                    .progressViewStyle(LinearProgressViewStyle(tint: AppColors.primary))
+                    .background(AppColors.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                
+                HStack {
+                    Text("Tamamlanan: \(info.completedDays) gün")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                    
+                    Spacer()
+                    
+                    Text("Toplam: \(totalDays) gün")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                }
+            }
+        }
+        .padding(20)
+        .background(AppColors.card)
+        .cornerRadius(20)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+    }
+}
+
+struct InfoRow: View {
+    let icon: String
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(AppColors.primary)
+                .frame(width: 18, height: 18)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                
+                Text(value)
+                    .font(.system(size: 16))
+                    .foregroundColor(AppColors.onSurface)
+            }
+        }
+    }
+}
+
+// MARK: - Leave Request Screen
+struct LeaveRequestScreen: View {
+    @State private var selectedTab = 0
+    @State private var startDate = ""
+    @State private var endDate = ""
+    @State private var reason = ""
+    @State private var showDatePicker = false
+    @State private var isSelectingStartDate = true
+    @State private var selectedDay = 1
+    @State private var selectedMonth = 6
+    @State private var selectedYear = 2025
+    @State private var entranceAnimationsFinished = false
+    
+    // Sample previous leave requests
+    let leaveRequests = [
+        LeaveRequest(
+            id: 1,
+            startDate: "05.06.2025",
+            endDate: "06.06.2025",
+            requestDate: "01.06.2025",
+            reason: "Aile ziyareti için izin talep ediyorum.",
+            status: .approved,
+            responseDate: "02.06.2025"
+        ),
+        LeaveRequest(
+            id: 2,
+            startDate: "15.07.2025",
+            endDate: "15.07.2025",
+            requestDate: "10.07.2025",
+            reason: "Sağlık kontrolü için izin talep ediyorum.",
+            status: .pending,
+            responseDate: nil
+        ),
+        LeaveRequest(
+            id: 3,
+            startDate: "01.08.2025",
+            endDate: "03.08.2025",
+            requestDate: "25.07.2025",
+            reason: "Özel nedenlerle izin talep ediyorum.",
+            status: .rejected,
+            responseDate: "27.07.2025"
+        )
+    ]
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Custom tab picker
+            if entranceAnimationsFinished {
+                TabPickerView(
+                    selectedTab: $selectedTab,
+                    titles: ["Yeni İzin Talebi", "Geçmiş Talepler"]
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
+            // Tab content
+            TabView(selection: $selectedTab) {
+                // New Leave Request Form
+                if entranceAnimationsFinished {
+                    ScrollView {
+                        VStack {
+                            NewLeaveRequestForm(
+                                startDate: $startDate,
+                                endDate: $endDate,
+                                reason: $reason,
+                                onShowDatePicker: {
+                                    isSelectingStartDate = true
+                                    showDatePicker = true
+                                },
+                                onShowEndDatePicker: {
+                                    isSelectingStartDate = false
+                                    showDatePicker = true
+                                }
+                            )
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        }
+                    }
+                    .tag(0)
+                } else {
+                    Color.clear.tag(0)
+                }
+                
+                // Previous Leave Requests List
+                if entranceAnimationsFinished {
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            ForEach(leaveRequests) { request in
+                                PreviousLeaveRequestCard(request: request)
+                                    .padding(.horizontal)
+                            }
+                            
+                            Spacer(minLength: 80)
+                        }
+                        .padding(.vertical, 16)
+                    }
+                    .tag(1)
+                } else {
+                    Color.clear.tag(1)
+                }
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+        }
+        .sheet(isPresented: $showDatePicker) {
+            DatePickerSheet(
+                selectedDay: $selectedDay,
+                selectedMonth: $selectedMonth,
+                selectedYear: $selectedYear,
+                isStartDate: isSelectingStartDate,
+                onDateSelected: { day, month, year in
+                    let formattedDate = String(format: "%02d.%02d.%04d", day, month, year)
+                    if isSelectingStartDate {
+                        startDate = formattedDate
+                    } else {
+                        endDate = formattedDate
+                    }
+                }
+            )
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct TabPickerView: View {
+    @Binding var selectedTab: Int
+    let titles: [String]
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(0..<titles.count, id: \.self) { index in
+                    Button(action: {
+                        withAnimation {
+                            selectedTab = index
+                        }
+                    }) {
+                        VStack(spacing: 8) {
+                            Text(titles[index])
+                                .font(.system(size: 16, weight: selectedTab == index ? .bold : .regular))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 8)
+                            
+                            // Custom indicator
+                            if selectedTab == index {
+                                Color(AppColors.secondary)
+                                    .frame(height: 3)
+                                    .transition(.opacity)
+                            } else {
+                                Color.clear
+                                    .frame(height: 3)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .background(Color.clear)
+            
+            Divider()
+                .background(AppColors.onPrimary.opacity(0.2))
+        }
+    }
+}
+
+struct NewLeaveRequestForm: View {
+    @Binding var startDate: String
+    @Binding var endDate: String
+    @Binding var reason: String
+    let onShowDatePicker: () -> Void
+    let onShowEndDatePicker: () -> Void
+    
+    var isFormValid: Bool {
+        !startDate.isEmpty && !endDate.isEmpty && !reason.isEmpty
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("İzin Talebi Oluştur")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(AppColors.onSurface)
+            
+            // Date fields
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Başlangıç Tarihi")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                
+                Button(action: onShowDatePicker) {
+                    HStack {
+                        Text(startDate.isEmpty ? "Tarih seçiniz" : startDate)
+                            .font(.system(size: 16))
+                            .foregroundColor(startDate.isEmpty ? AppColors.onSurfaceVariant.opacity(0.7) : AppColors.onSurface)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 8)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "calendar")
+                            .foregroundColor(AppColors.primary)
+                    }
+                    .padding(.horizontal, 12)
+                    .background(AppColors.surfaceVariant)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(AppColors.onSurfaceVariant.opacity(0.3), lineWidth: 1)
+                    )
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Bitiş Tarihi")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                
+                Button(action: onShowEndDatePicker) {
+                    HStack {
+                        Text(endDate.isEmpty ? "Tarih seçiniz" : endDate)
+                            .font(.system(size: 16))
+                            .foregroundColor(endDate.isEmpty ? AppColors.onSurfaceVariant.opacity(0.7) : AppColors.onSurface)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 8)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "calendar")
+                            .foregroundColor(AppColors.primary)
+                    }
+                    .padding(.horizontal, 12)
+                    .background(AppColors.surfaceVariant)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(AppColors.onSurfaceVariant.opacity(0.3), lineWidth: 1)
+                    )
+                }
+            }
+            
+            // Reason field
+            VStack(alignment: .leading, spacing: 8) {
+                Text("İzin Nedeni")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                
+                TextEditor(text: $reason)
+                    .font(.system(size: 16))
+                    .padding(12)
+                    .frame(minHeight: 100)
+                    .background(AppColors.surfaceVariant)
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(AppColors.onSurfaceVariant.opacity(0.3), lineWidth: 1)
+                    )
+                    .overlay(
+                        Group {
+                            if reason.isEmpty {
+                                Text("İzin nedeninizi buraya yazınız...")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                                    .padding(16)
+                                    .allowsHitTesting(false)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            }
+                        }
+                    )
+            }
+            
+            // Submit button
+            Button(action: {
+                // Submit leave request
+            }) {
+                HStack {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 16))
+                    
+                    Text("İzin Talebini Gönder")
+                        .font(.system(size: 16, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(isFormValid ? AppColors.primary : AppColors.primary.opacity(0.5))
+                .cornerRadius(12)
+            }
+            .disabled(!isFormValid)
+        }
+        .padding(20)
+        .background(AppColors.card)
+        .cornerRadius(20)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+    }
+}
+
+struct DatePickerSheet: View {
+    @Binding var selectedDay: Int
+    @Binding var selectedMonth: Int
+    @Binding var selectedYear: Int
+    let isStartDate: Bool
+    let onDateSelected: (Int, Int, Int) -> Void
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text(isStartDate ? "Başlangıç Tarihi Seç" : "Bitiş Tarihi Seç")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+                
+                // Date picker wheels
+                HStack(spacing: 20) {
+                    // Day picker
+                    Picker("Gün", selection: $selectedDay) {
+                        ForEach(1...31, id: \.self) { day in
+                            Text(String(format: "%02d", day)).tag(day)
+                        }
+                    }
+                    .pickerStyle(WheelPickerStyle())
+                    .frame(width: 60)
+                    .clipped()
+                    
+                    // Month picker
+                    Picker("Ay", selection: $selectedMonth) {
+                        ForEach(1...12, id: \.self) { month in
+                            Text(String(format: "%02d", month)).tag(month)
+                        }
+                    }
+                    .pickerStyle(WheelPickerStyle())
+                    .frame(width: 60)
+                    .clipped()
+                    
+                    // Year picker
+                    Picker("Yıl", selection: $selectedYear) {
+                        ForEach(2023...2027, id: \.self) { year in
+                            Text(String(year)).tag(year)
+                        }
+                    }
+                    .pickerStyle(WheelPickerStyle())
+                    .frame(width: 80)
+                    .clipped()
+                }
+                .padding()
+                
+                Text("Seçili Tarih: \(String(format: "%02d.%02d.%04d", selectedDay, selectedMonth, selectedYear))")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+                    .padding(.top, 8)
+                
+                Spacer()
+                
+                HStack(spacing: 16) {
+                    Button("İptal") {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(AppColors.onSurfaceVariant.opacity(0.5), lineWidth: 1)
+                    )
+                    
+                    Button("Seç") {
+                        onDateSelected(selectedDay, selectedMonth, selectedYear)
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(AppColors.primary)
+                    .cornerRadius(8)
+                }
+                .padding(.horizontal)
+            }
+            .padding()
+            .navigationBarHidden(true)
+        }
+    }
+}
+
+struct PreviousLeaveRequestCard: View {
+    let request: LeaveRequest
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack {
+            Button(action: {
+                withAnimation(.spring()) {
+                    isExpanded.toggle()
+                }
+            }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 12) {
+                        // Status icon
+                        ZStack {
+                            Circle()
+                                .fill(request.status.color.opacity(0.2))
+                                .frame(width: 40, height: 40)
+                            
+                            Image(systemName: request.status.icon)
+                                .foregroundColor(request.status.color)
+                                .font(.system(size: 18))
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(request.startDate) - \(request.endDate)")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(AppColors.onSurface)
+                            
+                            Text("Talep: \(request.requestDate)")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.onSurfaceVariant)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                            .animation(.spring(), value: isExpanded)
+                    }
+                    
+                    if isExpanded {
+                        Divider()
+                            .padding(.vertical, 8)
+                        
+                        Text("İzin Nedeni:")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AppColors.onSurface)
+                        
+                        Text(request.reason)
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .background(AppColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: request.status.color.opacity(0.15), radius: 10, x: 0, y: 4)
+        .animation(.spring(), value: isExpanded)
+    }
+}
+
+// MARK: - Survey Screens
+struct SurveyListScreen: View {
+    @State private var entranceAnimationsFinished = false
+    @State private var selectedSurveyId: Int? = nil
+    
+    // Sample surveys
+    let surveys = [
+        Survey(
+            id: 1,
+            title: "Çalışan Memnuniyet Anketi",
+            description: "Bu anket çalışanların memnuniyet düzeylerini ölçmek için tasarlanmıştır.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Şirket içi iletişimi nasıl değerlendiriyorsunuz?",
+                    type: .multipleChoice,
+                    options: ["Çok İyi", "İyi", "Orta", "Kötü", "Çok Kötü"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Çalışma ortamının verimliliğinizi nasıl etkilediğini düşünüyorsunuz?",
+                    type: .multipleChoice,
+                    options: ["Olumlu Etkiliyor", "Kısmen Olumlu", "Etkilemiyor", "Kısmen Olumsuz", "Olumsuz Etkiliyor"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Şirketimizde iyileştirilmesi gereken alanlar nelerdir? Lütfen detaylı açıklayınız.",
+                    type: .essay
+                )
+            ],
+            creationDate: "15.03.2025",
+            dueDate: "30.03.2025"
+        ),
+        Survey(
+            id: 2,
+            title: "Staj Programı Değerlendirme Anketi",
+            description: "Staj programının etkinliğini değerlendirmek için bu anketi doldurmanızı rica ederiz.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Staj programını genel olarak nasıl değerlendirirsiniz?",
+                    type: .multipleChoice,
+                    options: ["Mükemmel", "Çok İyi", "İyi", "Ortalama", "Kötü"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Staj süresi yeterli miydi?",
+                    type: .multipleChoice,
+                    options: ["Çok Uzun", "Yeterli", "Çok Kısa"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Staj programı beklentilerinizi karşıladı mı? Neden?",
+                    type: .essay
+                ),
+                SurveyQuestion(
+                    id: 4,
+                    question: "Staj programında en beğendiğiniz yönler nelerdir?",
+                    type: .essay
+                )
+            ],
+            creationDate: "10.03.2025",
+            dueDate: "25.03.2025"
+        ),
+        Survey(
+            id: 3,
+            title: "Eğitim İhtiyaçları Değerlendirme Anketi",
+            description: "Gelecek dönem eğitim planlaması için görüşlerinizi belirtmenizi rica ederiz.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Hangi alanlarda eğitim almak istersiniz?",
+                    type: .multipleChoice,
+                    options: ["Teknik Beceriler", "Liderlik", "İletişim", "Proje Yönetimi", "Yabancı Dil", "Diğer"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Eğitim programlarının süresi ne kadar olmalı?",
+                    type: .multipleChoice,
+                    options: ["1-2 saat", "Yarım gün", "Tam gün", "Birkaç gün", "Haftalık"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Hangi spesifik konularda eğitim almak istediğinizi belirtiniz.",
+                    type: .essay
+                )
+            ],
+            creationDate: "05.03.2025",
+            dueDate: "20.03.2025"
+        )
+    ]
+    
+    var body: some View {
+        ZStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    if entranceAnimationsFinished {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Anketler")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(AppColors.onPrimary)
+                            
+                            Text("Toplam \(surveys.count) anket")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
+                    ForEach(Array(surveys.enumerated()), id: \.element.id) { index, survey in
+                        if entranceAnimationsFinished {
+                            SurveyCard(survey: survey) {
+                                selectedSurveyId = survey.id
+                            }
+                            .padding(.horizontal)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing)
+                                    .combined(with: .opacity)
+                                    .animation(.easeInOut.delay(Double(index) * 0.1)),
+                                removal: .opacity
+                            ))
+                        }
+                    }
+                    
+                    Spacer(minLength: 80)
+                }
+                .padding(.vertical, 8)
+            }
+            
+            // Survey detail sheet
+            if let selectedId = selectedSurveyId, let survey = surveys.first(where: { $0.id == selectedId }) {
+                SurveyDetailView(survey: survey, isShowing: $selectedSurveyId)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct SurveyCard: View {
+    let survey: Survey
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(survey.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppColors.onSurface)
+                    
+                    Text(survey.description)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                        .lineLimit(2)
+                }
+                
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "questionmark.bubble")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.primary)
+                            
+                            Text("\(survey.questions.count) Soru")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.onSurfaceVariant)
+                        }
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.primary)
+                            
+                            Text("Son Tarih: \(survey.dueDate)")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.onSurfaceVariant)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    Text("Başla")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(AppColors.primary)
+                        .cornerRadius(12)
+                }
+            }
+            .padding(20)
+            .background(AppColors.card)
+            .cornerRadius(20)
+            .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct SurveyDetailView: View {
+    let survey: Survey
+    @Binding var isShowing: Int?
+    
+    @State private var selectedOptions: [Int: String] = [:]
+    @State private var textAnswers: [Int: String] = [:]
+    @State private var entranceAnimationsFinished = false
+    
+    var body: some View {
+        ZStack {
+            // Full screen background
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation {
+                        isShowing = nil
+                    }
+                }
+            
+            // Survey content
+            VStack(spacing: 0) {
+                // Navigation bar
+                HStack {
+                    Button(action: {
+                        withAnimation {
+                            isShowing = nil
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(AppColors.onPrimary)
+                            .padding(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Spacer()
+                    
+                    Text(survey.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                    
+                    // Empty space for symmetry
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18))
+                        .foregroundColor(.clear)
+                        .padding(8)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                // Description
+                Text(survey.description)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                
+                // Questions
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ForEach(Array(survey.questions.enumerated()), id: \.element.id) { index, question in
+                            if entranceAnimationsFinished {
+                                if question.type == .multipleChoice {
+                                    MultipleChoiceQuestionView(
+                                        question: question,
+                                        selectedOption: selectedOptions[question.id],
+                                        onOptionSelected: { option in
+                                            selectedOptions[question.id] = option
+                                        }
+                                    )
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .trailing)
+                                            .combined(with: .opacity)
+                                            .animation(.easeInOut.delay(Double(index) * 0.05)),
+                                        removal: .opacity
+                                    ))
+                                } else {
+                                    EssayQuestionView(
+                                        question: question,
+                                        answer: textAnswers[question.id] ?? "",
+                                        onAnswerChanged: { answer in
+                                            textAnswers[question.id] = answer
+                                        }
+                                    )
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .trailing)
+                                            .combined(with: .opacity)
+                                            .animation(.easeInOut.delay(Double(index) * 0.05)),
+                                        removal: .opacity
+                                    ))
+                                }
+                            }
+                        }
+                        
+                        Button(action: {
+                            withAnimation {
+                                isShowing = nil
+                            }
+                        }) {
+                            Text("Anketi Gönder")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.vertical, 16)
+                                .frame(maxWidth: .infinity)
+                                .background(AppColors.primary)
+                                .cornerRadius(16)
+                                .shadow(color: AppColors.primary.opacity(0.4), radius: 10, x: 0, y: 5)
+                        }
+                        .padding()
+                        .padding(.bottom, 40)
+                    }
+                    .padding(.horizontal)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color.white)
+                        .edgesIgnoringSafeArea(.bottom)
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color(hex: "1A237E"),  // Dark blue
+                        Color(hex: "3949AB"),  // Blue
+                        Color(hex: "5C6BC0")   // Light blue
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .edgesIgnoringSafeArea(.all)
+            )
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct MultipleChoiceQuestionView: View {
+    let question: SurveyQuestion
+    let selectedOption: String?
+    let onOptionSelected: (String) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Soru \(question.id)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+                
+                Text(question.question)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+            }
+            
+            VStack(spacing: 6) {
+                ForEach(question.options, id: \.self) { option in
+                    Button(action: {
+                        onOptionSelected(option)
+                    }) {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .stroke(
+                                        selectedOption == option ? AppColors.primary : AppColors.onSurfaceVariant.opacity(0.6),
+                                        lineWidth: 2
+                                    )
+                                    .frame(width: 20, height: 20)
+                                
+                                if selectedOption == option {
+                                    Circle()
+                                        .fill(AppColors.primary)
+                                        .frame(width: 12, height: 12)
+                                }
+                            }
+                            
+                            Text(option)
+                                .font(.system(size: 16))
+                                .foregroundColor(
+                                    selectedOption == option ? AppColors.primary : AppColors.onSurface
+                                )
+                                .fontWeight(selectedOption == option ? .medium : .regular)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            selectedOption == option ? AppColors.primary.opacity(0.1) : Color.clear
+                        )
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+        .padding(16)
+        .background(AppColors.cardVariant)
+        .cornerRadius(16)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+}
+
+struct EssayQuestionView: View {
+    let question: SurveyQuestion
+    let answer: String
+    let onAnswerChanged: (String) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Soru \(question.id)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+                
+                Text(question.question)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+            }
+            
+            TextEditor(text: Binding(
+                get: { answer },
+                set: { onAnswerChanged($0) }
+            ))
+            .font(.system(size: 16))
+            .padding(12)
+            .frame(minHeight: 100)
+            .background(AppColors.surface)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(AppColors.primary.opacity(0.3), lineWidth: 1)
+            )
+            .overlay(
+                Group {
+                    if answer.isEmpty {
+                        Text("Cevabınızı buraya yazın...")
+                            .font(.system(size: 16))
+                            .foregroundColor(AppColors.onSurfaceVariant.opacity(0.5))
+                            .padding(16)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                    }
+                }
+            )
+        }
+        .padding(16)
+        .background(AppColors.cardVariant)
+        .cornerRadius(16)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+}
+
+// MARK: - Preview
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        InternAppUI()
+    }
+}
