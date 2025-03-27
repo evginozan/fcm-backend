@@ -796,14 +796,10 @@ struct TabPickerView: View {
                                 .padding(.horizontal, 8)
                             
                             // Custom indicator
-                            if selectedTab == index {
-                                Color(AppColors.secondary)
-                                    .frame(height: 3)
-                                    .transition(.opacity)
-                            } else {
-                                Color.clear
-                                    .frame(height: 3)
-                            }
+                            Rectangle()
+                                .fill(selectedTab == index ? AppColors.secondary : Color.clear)
+                                .frame(height: 3)
+                                .transition(.opacity)
                         }
                     }
                     .frame(maxWidth: .infinity)
