@@ -1,0 +1,130 @@
+Bu hata mesajları, Swift kodunda bazı sorunlar olduğunu gösteriyor:
+
+1. "Invalid redeclaration of 'ContentView_Previews'" - Bu hata, ContentView_Previews adlı bir önizleme yapısının projenizde zaten tanımlanmış olduğunu ve bizim kodumuzda tekrar tanımlanmaya çalışıldığını gösteriyor.
+
+2. "Cannot use instance member 'id' as a default parameter" - Bu hata iki kez tekrarlanmış ve bazı model sınıflarındaki id parametresinin varsayılan değer olarak kullanılmaya çalışıldığını gösteriyor.
+
+Bu hataları düzeltmek için şu adımları önerebilirim:
+
+1. ContentView_Previews ile ilgili hata:
+   - Eğer yeni bir SwiftUI projesi oluşturdunuz, içinde zaten bir ContentView.swift dosyası olacaktır ve bu dosya içinde ContentView_Previews yapısı bulunacaktır. İki seçenek var:
+     - Ya bu varsayılan ContentView.swift dosyasını silin ve bizim kodumuzla değiştirin
+     - Ya da bizim kodumuzu ayrı bir dosyaya koyun ve varsayılan ContentView_Previews yapısını değiştirmeyin
+
+2. "Cannot use instance member 'id' as a default parameter" hatası:
+   - Swift'te bir struct içindeki bir özellik (property), aynı struct'ın bir başka özelliği için varsayılan değer olarak kullanılamaz. Muhtemelen model sınıflarındaki (Intern, SurveyQuestion vb.) id alanlarını varsayılan parametreler için kullanmaya çalışıyoruz.
+   - Bu sorunu çözmek için id alanlarının ya varsayılan değerlerini değiştirmemiz ya da bu değerleri init fonksiyonunun içinde atamamız gerekecek.
+
+Kodu düzenleyelim:
+
+1. Öncelikle Önizleme (Preview) sorununu çözelim - tüm kod için tek bir önizleme yapısı yapabiliriz veya hiç önizleme yapmayabiliriz.
+
+2. id alanı ile ilgili sorunlar için kodda şu kısımları değiştirmemiz gerekiyor. İlgili model sınıflarına bakarsak:
+
+```swift
+struct Intern: Identifiable {
+    let id: Int
+    let name: String
+    let department: String
+    let email: String
+    let phone: String
+    let startDate: String
+    let endDate: String
+    let period: InternPeriod
+    let avatarId: Int
+    
+    init(id: Int, name: String, department: String, email: String = "stajyer\(id)@example.com", 
+         phone: String = "+90 555 123 45 6\(id)", startDate: String, endDate: String, 
+         period: InternPeriod, avatarId: Int = 0) {
+        self.id = id
+        self.name = name
+        self.department = department
+        self.email = email
+        self.phone = phone
+        self.startDate = startDate
+        self.endDate = endDate
+        self.period = period
+        self.avatarId = avatarId
+    }
+}
+```
+
+Burada sorun, email ve phone varsayılan değerlerinde id kullanılması. Bu değerler, id daha önce atanmadan kullanılmaya çalışıldığı için hata veriyor. Bunu düzeltmek için:
+
+```swift
+struct Intern: Identifiable {
+    let id: Int
+    let name: String
+    let department: String
+    let email: String
+    let phone: String
+    let startDate: String
+    let endDate: String
+    let period: InternPeriod
+    let avatarId: Int
+    
+    init(id: Int, name: String, department: String, email: String? = nil, 
+         phone: String? = nil, startDate: String, endDate: String, 
+         period: InternPeriod, avatarId: Int = 0) {
+        self.id = id
+        self.name = name
+        self.department = department
+        self.email = email ?? "stajyer\(id)@example.com"
+        self.phone = phone ?? "+90 555 123 45 6\(id)"
+        self.startDate = startDate
+        self.endDate = endDate
+        self.period = period
+        self.avatarId = avatarId
+    }
+}
+```
+
+Bu değişiklikle, email ve phone parametreleri için opsiyonel (optional) tipler kullanıyoruz ve varsayılan değerleri init fonksiyonu içinde atıyoruz.
+
+Bu değişiklikleri yapmak, bahsedilen hataları giderecektir. Özellikle id parametresiyle ilgili hatalar, id'yi varsayılan değerlerde kullanmaktan kaynaklanıyor.
+
+Görünen hatalardan iki ana sorun var:
+
+1. **"Invalid redeclaration of 'ContentView_Previews'"** - Muhtemelen projenizde zaten bir ContentView_Previews yapısı var ve bu çakışmaya neden oluyor.
+
+2. **"Cannot use instance member 'id' as a default parameter"** - Swift'te bir instance özelliği (id), aynı model içindeki başka bir parametrenin varsayılan değeri olarak kullanılamaz.
+
+Bu sorunları çözmek için şu değişiklikleri yapmanız gerekiyor:
+
+### 1. İlk Sorunu Çözmek İçin:
+- Ya varsayılan ContentView.swift dosyasını silin ve tamamen yeni kodla değiştirin
+- Ya da kodu ModernAppUI.swift gibi farklı bir dosyaya yerleştirin ve önizlemeleri kaldırın
+
+### 2. "id" Hatalarını Çözmek İçin:
+Intern modelindeki constructor'ı şu şekilde değiştirin:
+
+```swift
+init(id: Int, name: String, department: String, email: String? = nil, 
+     phone: String? = nil, startDate: String, endDate: String, 
+     period: InternPeriod, avatarId: Int = 0) {
+    self.id = id
+    self.name = name
+    self.department = department
+    self.email = email ?? "stajyer\(id)@example.com"
+    self.phone = phone ?? "+90 555 123 45 6\(id)"
+    self.startDate = startDate
+    self.endDate = endDate
+    self.period = period
+    self.avatarId = avatarId
+}
+```
+
+Bu değişiklik, id'nin varsayılan parametre olarak kullanılması yerine, değerlerin constructor içinde atanmasını sağlayacaktır.
+
+Ayrıca, önizleme ile ilgili kodu tamamen kaldırmak da bir çözüm olabilir. Kodun en sonundaki şu kısmı silebilirsiniz:
+
+```swift
+// MARK: - Preview
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ModernAppUI()
+    }
+}
+```
+
+Bu değişiklikleri yaptıktan sonra uygulamanız çalışmalıdır. Eğer hala sorun yaşıyorsanız, kodun tamamını yeni bir Swift dosyasına yerleştirip önizleme kısmını kaldırarak temiz bir başlangıç yapmanızı öneririm.
