@@ -1,0 +1,1737 @@
+import SwiftUI
+
+// MARK: - Color Scheme
+struct AppColors {
+    // Main colors
+    static let primary = Color(hex: "3F51B5") // Indigo
+    static let primaryDark = Color(hex: "303F9F")
+    static let secondary = Color(hex: "2196F3") // Blue
+    static let secondaryDark = Color(hex: "1976D2")
+    static let accent = Color(hex: "FF4081") // Pink
+    
+    // Surface colors
+    static let surface = Color.white
+    static let surfaceVariant = Color(hex: "F5F5F5") // Very light gray
+    static let background = Color(hex: "E0E0E0") // Light gray
+    
+    // Text colors
+    static let onPrimary = Color.white
+    static let onSurface = Color(hex: "212121") // Almost black
+    static let onSurfaceVariant = Color(hex: "757575") // Gray
+    static let onBackground = Color(hex: "212121") // Almost black
+    
+    // Status colors
+    static let success = Color(hex: "4CAF50") // Green
+    static let warning = Color(hex: "FF9800") // Orange
+    static let error = Color(hex: "F44336") // Red
+    static let info = Color(hex: "2196F3") // Blue
+    
+    // Card colors
+    static let card = Color.white
+    static let cardVariant = Color(hex: "FAFAFA") // Very light gray
+    
+    // Shadow color
+    static let shadow = Color.black.opacity(0.25)
+}
+
+// MARK: - Models
+enum InternPeriod: String, CaseIterable, Identifiable {
+    case summer2025 = "YAZ_2025"
+    case fall2025 = "GUZ_2025"
+    case spring2026 = "BAHAR_2026"
+    case summer2026 = "YAZ_2026"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .summer2025: return "Yaz 2025"
+        case .fall2025: return "Güz 2025"
+        case .spring2026: return "Bahar 2026"
+        case .summer2026: return "Yaz 2026"
+        }
+    }
+}
+
+struct Intern: Identifiable {
+    let id: Int
+    let name: String
+    let department: String
+    let email: String
+    let phone: String
+    let startDate: String
+    let endDate: String
+    let period: InternPeriod
+    let avatarId: Int
+    
+    init(id: Int, name: String, department: String, email: String = "stajyer\(id)@example.com", 
+         phone: String = "+90 555 123 45 6\(id)", startDate: String, endDate: String, 
+         period: InternPeriod, avatarId: Int = 0) {
+        self.id = id
+        self.name = name
+        self.department = department
+        self.email = email
+        self.phone = phone
+        self.startDate = startDate
+        self.endDate = endDate
+        self.period = period
+        self.avatarId = avatarId
+    }
+}
+
+enum RequestStatus: String, Identifiable {
+    case pending = "BEKLEMEDE"
+    case approved = "ONAYLANDI"
+    case rejected = "REDDEDILDI"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .pending: return "Beklemede"
+        case .approved: return "Onaylandı"
+        case .rejected: return "Reddedildi"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .pending: return AppColors.warning
+        case .approved: return AppColors.success
+        case .rejected: return AppColors.error
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .pending: return "clock"
+        case .approved: return "checkmark.circle"
+        case .rejected: return "xmark.circle"
+        }
+    }
+}
+
+struct LeaveRequest: Identifiable {
+    let id: Int
+    let internId: String
+    let internName: String
+    let startDate: String
+    let endDate: String
+    let requestDate: String
+    let reason: String
+    let status: RequestStatus
+    let responseDate: String?
+    let responseNote: String?
+    
+    var formattedDates: String {
+        return "\(startDate) - \(endDate)"
+    }
+}
+
+enum QuestionType {
+    case multipleChoice
+    case essay
+}
+
+struct SurveyQuestion: Identifiable {
+    let id: Int
+    let question: String
+    let type: QuestionType
+    let options: [String]
+    
+    init(id: Int, question: String, type: QuestionType, options: [String] = []) {
+        self.id = id
+        self.question = question
+        self.type = type
+        self.options = options
+    }
+}
+
+struct Survey: Identifiable {
+    let id: Int
+    let title: String
+    let description: String
+    let questions: [SurveyQuestion]
+    let creationDate: String
+    let dueDate: String
+}
+
+struct Announcement: Identifiable {
+    let id: Int
+    let title: String
+    let content: String
+    let date: String
+    let important: Bool
+}
+
+// MARK: - Navigation Items
+struct NavigationItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let icon: String
+    let tag: String
+}
+
+// MARK: - Extension for Color from hex
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (1, 1, 1, 0)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
+}
+
+// MARK: - Main App Structure
+struct ModernAppUI: View {
+    @State private var selectedTab = "anasayfa"
+    @State private var notificationCount = 3
+    
+    private let tabs = [
+        NavigationItem(title: "Anasayfa", icon: "house.fill", tag: "anasayfa"),
+        NavigationItem(title: "Stajyerler", icon: "person.fill", tag: "stajyerler"),
+        NavigationItem(title: "Talepler", icon: "doc.text.fill", tag: "talepler"),
+        NavigationItem(title: "Anket", icon: "chart.bar.fill", tag: "anket")
+    ]
+    
+    var body: some View {
+        ZStack {
+            // Background gradient
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "1A237E"),  // Dark blue
+                    Color(hex: "3949AB"),  // Blue
+                    Color(hex: "5C6BC0")   // Light blue
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            // Main content
+            VStack(spacing: 0) {
+                // Top navigation bar
+                HStack {
+                    // Dynamic title animation
+                    Text(tabs.first(where: { $0.tag == selectedTab })?.title ?? "")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                    
+                    Spacer()
+                    
+                    // Notifications button
+                    ZStack(alignment: .topTrailing) {
+                        Button(action: {
+                            // Notification action
+                        }) {
+                            Image(systemName: "bell.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(8)
+                        }
+                        
+                        if notificationCount > 0 {
+                            Text("\(notificationCount)")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(AppColors.onPrimary)
+                                .padding(4)
+                                .background(AppColors.accent)
+                                .clipShape(Circle())
+                                .offset(x: 8, y: -8)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                // Content area with tab views
+                TabView(selection: $selectedTab) {
+                    DashboardScreen()
+                        .tag("anasayfa")
+                    
+                    InternsScreen()
+                        .tag("stajyerler")
+                    
+                    RequestsScreen()
+                        .tag("talepler")
+                    
+                    SurveysScreen()
+                        .tag("anket")
+                }
+                .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+                
+                // Bottom navigation bar
+                HStack(spacing: 0) {
+                    ForEach(tabs) { tab in
+                        Button(action: {
+                            withAnimation {
+                                selectedTab = tab.tag
+                            }
+                        }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: tab.icon)
+                                    .font(.system(size: 20))
+                                
+                                Text(tab.title)
+                                    .font(.system(size: 12, weight: selectedTab == tab.tag ? .bold : .regular))
+                            }
+                            .foregroundColor(selectedTab == tab.tag ? AppColors.primary : AppColors.onSurfaceVariant)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                selectedTab == tab.tag ?
+                                AppColors.primaryDark.opacity(0.1) :
+                                Color.clear
+                            )
+                        }
+                    }
+                }
+                .background(AppColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: AppColors.shadow, radius: 10, x: 0, y: -5)
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+}
+
+// MARK: - Dashboard Screen
+struct DashboardScreen: View {
+    
+    @State private var isWelcomeCardVisible = false
+    @State private var isTitleVisible = false
+    @State private var areCardsVisible = false
+    
+    let announcements = [
+        Announcement(id: 1, title: "Şirket Gezisi", content: "Bu ay sonu şirket pikniği yapılacaktır. Katılım formunu doldurmanızı rica ederiz.", date: "24.03.2025", important: true),
+        Announcement(id: 2, title: "Yeni Ofis Düzeni", content: "Önümüzdeki hafta itibarıyla yeni ofis düzenine geçilecektir.", date: "22.03.2025", important: false),
+        Announcement(id: 3, title: "Eğitim Programı", content: "Nisan ayı eğitim programı yayınlanmıştır. Takvimlerinizi kontrol ediniz.", date: "20.03.2025", important: true)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Welcome card
+                if isWelcomeCardVisible {
+                    VStack {
+                        WelcomeCard()
+                    }
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.95).combined(with: .opacity),
+                        removal: .scale(scale: 0.95).combined(with: .opacity)
+                    ))
+                }
+                
+                // Announcements section
+                if isTitleVisible {
+                    Text("Duyurular")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                // Announcement cards with staggered animation
+                VStack(spacing: 16) {
+                    ForEach(Array(announcements.enumerated()), id: \.element.id) { index, announcement in
+                        if areCardsVisible {
+                            AnnouncementCard(announcement: announcement)
+                                .transition(.asymmetric(
+                                    insertion: .slide.combined(with: .opacity.animation(.easeInOut.delay(Double(index) * 0.1))),
+                                    removal: .opacity
+                                ))
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                
+                Spacer(minLength: 80)
+            }
+            .padding(.top)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.4)) {
+                isWelcomeCardVisible = true
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    isTitleVisible = true
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    areCardsVisible = true
+                }
+            }
+        }
+    }
+}
+
+struct WelcomeCard: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(AppColors.primary.opacity(0.9))
+                .shadow(color: AppColors.shadow, radius: 8, x: 0, y: 4)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Hoş Geldin,")
+                    .font(.system(size: 22))
+                    .fontWeight(.regular)
+                    .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                
+                Text("Ahmet Talha")
+                    .font(.system(size: 28))
+                    .fontWeight(.bold)
+                    .foregroundColor(AppColors.onPrimary)
+                
+                Spacer(minLength: 24)
+                
+                // Stats row
+                HStack(spacing: 0) {
+                    StatItem(title: "Stajyerler", value: "5", icon: "person.fill")
+                    Spacer()
+                    StatItem(title: "Talepler", value: "12", icon: "doc.text.fill")
+                    Spacer()
+                    StatItem(title: "Anketler", value: "3", icon: "chart.bar.fill")
+                }
+            }
+            .padding(24)
+        }
+        .padding(.horizontal)
+    }
+}
+
+struct StatItem: View {
+    let title: String
+    let value: String
+    let icon: String
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundColor(AppColors.onPrimary)
+            
+            Text(value)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(AppColors.onPrimary)
+            
+            Text(title)
+                .font(.system(size: 14))
+                .foregroundColor(AppColors.onPrimary.opacity(0.8))
+        }
+    }
+}
+
+struct AnnouncementCard: View {
+    let announcement: Announcement
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack {
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(announcement.title)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(AppColors.onSurface)
+                        
+                        if announcement.important {
+                            Spacer(minLength: 8)
+                            
+                            Text("Önemli")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(AppColors.error)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(AppColors.error.opacity(0.1))
+                                .cornerRadius(4)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    
+                    Text(announcement.content)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                        .lineLimit(isExpanded ? nil : 2)
+                    
+                    Text(announcement.date)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+        .background(AppColors.card)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
+    }
+}
+
+// MARK: - Interns Screen
+struct InternsScreen: View {
+    @State private var selectedPeriod = InternPeriod.summer2025
+    @State private var isDropdownOpen = false
+    @State private var entranceAnimationsFinished = false
+    
+    let allInterns = [
+        Intern(id: 1, name: "Ahmet Yılmaz", department: "Bilgisayar Mühendisliği", startDate: "01.06.2025", endDate: "31.08.2025", period: .summer2025),
+        Intern(id: 2, name: "Ayşe Kaya", department: "Elektrik-Elektronik Mühendisliği", startDate: "15.06.2025", endDate: "15.09.2025", period: .summer2025),
+        Intern(id: 3, name: "Mehmet Demir", department: "Yazılım Mühendisliği", startDate: "01.10.2025", endDate: "30.12.2025", period: .fall2025),
+        Intern(id: 4, name: "Zeynep Şahin", department: "Endüstri Mühendisliği", startDate: "15.01.2026", endDate: "15.04.2026", period: .spring2026),
+        Intern(id: 5, name: "Mustafa Öztürk", department: "Bilgisayar Mühendisliği", startDate: "01.06.2026", endDate: "31.08.2026", period: .summer2026)
+    ]
+    
+    var filteredInterns: [Intern] {
+        allInterns.filter { $0.period == selectedPeriod }
+    }
+    
+    var colors: [Color] {
+        [
+            Color(hex: "4CAF50"), // Green
+            Color(hex: "2196F3"), // Blue
+            Color(hex: "FF9800"), // Orange
+            Color(hex: "9C27B0"), // Purple
+            Color(hex: "00BCD4")  // Turquoise
+        ]
+    }
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header section with animation
+                if entranceAnimationsFinished {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Aktif Stajyerler")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(AppColors.onPrimary)
+                        
+                        Text("Toplam \(filteredInterns.count) stajyer")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Staj Dönemi")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(AppColors.onPrimary)
+                            
+                            // Custom dropdown
+                            PeriodDropdown(
+                                selectedPeriod: $selectedPeriod,
+                                isOpen: $isDropdownOpen
+                            )
+                        }
+                        .padding(.top, 8)
+                    }
+                    .padding(.horizontal)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                // Interns list with staggered animation
+                VStack(spacing: 16) {
+                    ForEach(Array(filteredInterns.enumerated()), id: \.element.id) { index, intern in
+                        if entranceAnimationsFinished {
+                            InternCard(
+                                intern: intern,
+                                color: colors[intern.id % colors.count]
+                            )
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity).animation(.easeInOut.delay(Double(index) * 0.05)),
+                                removal: .opacity
+                            ))
+                            .padding(.horizontal)
+                        }
+                    }
+                }
+                
+                Spacer(minLength: 80)
+            }
+            .padding(.vertical)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct PeriodDropdown: View {
+    @Binding var selectedPeriod: InternPeriod
+    @Binding var isOpen: Bool
+    
+    var body: some View {
+        VStack {
+            // Dropdown header
+            Button(action: {
+                withAnimation {
+                    isOpen.toggle()
+                }
+            }) {
+                HStack {
+                    Text(selectedPeriod.displayName)
+                        .foregroundColor(AppColors.onPrimary)
+                        .fontWeight(.medium)
+                    
+                    Spacer()
+                    
+                    Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                        .foregroundColor(AppColors.onPrimary)
+                }
+                .padding(16)
+                .background(AppColors.primary.opacity(0.2))
+                .cornerRadius(12)
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // Dropdown options
+            if isOpen {
+                VStack(spacing: 0) {
+                    ForEach(InternPeriod.allCases) { period in
+                        Button(action: {
+                            selectedPeriod = period
+                            withAnimation {
+                                isOpen = false
+                            }
+                        }) {
+                            HStack {
+                                if selectedPeriod == period {
+                                    Image(systemName: "checkmark")
+                                        .foregroundColor(AppColors.primary)
+                                }
+                                
+                                Text(period.displayName)
+                                    .fontWeight(selectedPeriod == period ? .bold : .regular)
+                                    .foregroundColor(selectedPeriod == period ? AppColors.primary : AppColors.onSurface)
+                                
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .background(
+                                selectedPeriod == period ? AppColors.primary.opacity(0.1) : Color.clear
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .background(AppColors.surface)
+                .cornerRadius(12)
+                .shadow(color: AppColors.shadow.opacity(0.2), radius: 10, x: 0, y: 5)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+}
+
+struct InternCard: View {
+    let intern: Intern
+    let color: Color
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header with avatar and name
+                HStack {
+                    // Avatar circle
+                    ZStack {
+                        Circle()
+                            .fill(color.opacity(0.2))
+                            .frame(width: 50, height: 50)
+                        
+                        Text(String(intern.name.prefix(1)))
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(color)
+                    }
+                    
+                    Text(intern.name)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppColors.onSurface)
+                        .padding(.leading, 16)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        withAnimation(.spring()) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                
+                // Expanded content
+                if isExpanded {
+                    VStack(spacing: 16) {
+                        Divider()
+                        
+                        DetailRow(icon: "graduationcap", label: "Bölüm", value: intern.department)
+                        DetailRow(icon: "envelope", label: "Email", value: intern.email)
+                        DetailRow(icon: "phone", label: "Telefon", value: intern.phone)
+                        DetailRow(icon: "calendar", label: "Staj Süresi", value: "\(intern.startDate) - \(intern.endDate)")
+                        
+                        HStack {
+                            Spacer()
+                            
+                            Button(action: {
+                                // Navigate to details
+                            }) {
+                                HStack {
+                                    Image(systemName: "person.text.rectangle")
+                                        .font(.system(size: 14))
+                                    
+                                    Text("Detaylar")
+                                        .font(.system(size: 14, weight: .medium))
+                                }
+                                .foregroundColor(color)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+            .padding(16)
+            .background(AppColors.card)
+            .cornerRadius(20)
+            .shadow(color: color.opacity(0.15), radius: 10, x: 0, y: 4)
+        }
+    }
+}
+
+struct DetailRow: View {
+    let icon: String
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(AppColors.primary)
+                .frame(width: 20, height: 20)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                
+                Text(value)
+                    .font(.system(size: 16))
+                    .foregroundColor(AppColors.onSurface)
+            }
+            
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Leave Requests Screen
+struct RequestsScreen: View {
+    @State private var selectedFilter = "Tümü"
+    @State private var showLeaveDetailDialog: LeaveRequest? = nil
+    @State private var showResponseDialog: LeaveRequest? = nil
+    @State private var entranceAnimationsFinished = false
+    
+    let leaveRequests = [
+        LeaveRequest(id: 1, internId: "ST001", internName: "Ahmet Yılmaz", startDate: "27.03.2025", endDate: "29.03.2025", requestDate: "20.03.2025", reason: "Aile ziyareti nedeniyle şehir dışında olacağım.", status: .pending, responseDate: nil, responseNote: nil),
+        LeaveRequest(id: 2, internId: "ST002", internName: "Ayşe Kaya", startDate: "02.04.2025", endDate: "02.04.2025", requestDate: "19.03.2025", reason: "Sağlık kontrolüm var.", status: .approved, responseDate: "20.03.2025", responseNote: nil),
+        LeaveRequest(id: 3, internId: "ST003", internName: "Mehmet Demir", startDate: "10.04.2025", endDate: "11.04.2025", requestDate: "15.03.2025", reason: "Üniversitedeki proje sunumum var.", status: .rejected, responseDate: "17.03.2025", responseNote: "Belirtilen tarihte kritik proje teslimi var, daha sonraki bir tarih için tekrar başvuru yapabilirsiniz."),
+        LeaveRequest(id: 4, internId: "ST004", internName: "Zeynep Şahin", startDate: "05.04.2025", endDate: "06.04.2025", requestDate: "18.03.2025", reason: "Kişisel nedenlerle izin talep ediyorum.", status: .pending, responseDate: nil, responseNote: nil),
+        LeaveRequest(id: 5, internId: "ST005", internName: "Mustafa Öztürk", startDate: "15.04.2025", endDate: "15.04.2025", requestDate: "10.03.2025", reason: "ALES sınavına gireceğim.", status: .approved, responseDate: "12.03.2025", responseNote: "Sınavda başarılar dileriz.")
+    ]
+    
+    var filteredRequests: [LeaveRequest] {
+        switch selectedFilter {
+        case "Beklemede":
+            return leaveRequests.filter { $0.status == .pending }
+        case "Onaylanan":
+            return leaveRequests.filter { $0.status == .approved }
+        case "Reddedilen":
+            return leaveRequests.filter { $0.status == .rejected }
+        default:
+            return leaveRequests
+        }
+    }
+    
+    var body: some View {
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Header section with animation
+                    if entranceAnimationsFinished {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("İzin Talepleri")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(AppColors.onPrimary)
+                            
+                            Text("Toplam \(filteredRequests.count) talep")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                        }
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
+                    // Filter tabs
+                    if entranceAnimationsFinished {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                FilterTab(title: "Tümü", icon: "list.bullet", isSelected: selectedFilter == "Tümü") {
+                                    selectedFilter = "Tümü"
+                                }
+                                
+                                FilterTab(title: "Beklemede", icon: "clock", isSelected: selectedFilter == "Beklemede") {
+                                    selectedFilter = "Beklemede"
+                                }
+                                
+                                FilterTab(title: "Onaylanan", icon: "checkmark.circle", isSelected: selectedFilter == "Onaylanan") {
+                                    selectedFilter = "Onaylanan"
+                                }
+                                
+                                FilterTab(title: "Reddedilen", icon: "xmark.circle", isSelected: selectedFilter == "Reddedilen") {
+                                    selectedFilter = "Reddedilen"
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
+                    
+                    // Leave request cards
+                    VStack(spacing: 16) {
+                        ForEach(Array(filteredRequests.enumerated()), id: \.element.id) { index, request in
+                            if entranceAnimationsFinished {
+                                LeaveRequestCard(request: request) {
+                                    showLeaveDetailDialog = request
+                                }
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity).animation(.easeInOut.delay(Double(index) * 0.05)),
+                                    removal: .opacity
+                                ))
+                                .padding(.horizontal)
+                            }
+                        }
+                    }
+                    
+                    Spacer(minLength: 80)
+                }
+                .padding(.vertical)
+            }
+            
+            // Leave detail sheet
+            if let request = showLeaveDetailDialog {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation {
+                            showLeaveDetailDialog = nil
+                        }
+                    }
+                
+                LeaveDetailSheet(
+                    request: request,
+                    isShowing: $showLeaveDetailDialog,
+                    onApprove: {
+                        // Handle approve action
+                        showLeaveDetailDialog = nil
+                    },
+                    onReject: {
+                        showLeaveDetailDialog = nil
+                        showResponseDialog = request
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            
+            // Response sheet for rejection
+            if let request = showResponseDialog {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        withAnimation {
+                            showResponseDialog = nil
+                        }
+                    }
+                
+                RejectionSheet(
+                    request: request,
+                    isShowing: $showResponseDialog
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct FilterTab: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                
+                Text(title)
+                    .font(.system(size: 14, weight: isSelected ? .bold : .regular))
+            }
+            .foregroundColor(isSelected ? AppColors.onPrimary : AppColors.onPrimary.opacity(0.7))
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(isSelected ? AppColors.secondary.opacity(0.3) : Color.clear)
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct LeaveRequestCard: View {
+    let request: LeaveRequest
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header with status
+                HStack {
+                    HStack(spacing: 12) {
+                        // Status icon
+                        ZStack {
+                            Circle()
+                                .fill(request.status.color.opacity(0.2))
+                                .frame(width: 40, height: 40)
+                            
+                            Image(systemName: request.status.icon)
+                                .foregroundColor(request.status.color)
+                                .font(.system(size: 20))
+                        }
+                        
+                        Text(request.internName)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(AppColors.onSurface)
+                    }
+                    
+                    Spacer()
+                    
+                    // Status badge
+                    Text(request.status.displayName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(request.status.color)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(request.status.color.opacity(0.1))
+                        .cornerRadius(8)
+                }
+                
+                // Dates
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("İzin Başlangıç")
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                        
+                        Text(request.startDate)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AppColors.onSurface)
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("İzin Bitiş")
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                        
+                        Text(request.endDate)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AppColors.onSurface)
+                    }
+                }
+                
+                // Reason preview
+                Text(request.reason)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.onSurfaceVariant)
+                    .lineLimit(1)
+                
+                // Footer
+                HStack {
+                    Text("Talep: \(request.requestDate)")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(AppColors.primary)
+                }
+            }
+            .padding(16)
+            .background(AppColors.card)
+            .cornerRadius(20)
+            .shadow(color: request.status.color.opacity(0.15), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct LeaveDetailSheet: View {
+    let request: LeaveRequest
+    @Binding var isShowing: LeaveRequest?
+    let onApprove: () -> Void
+    let onReject: () -> Void
+    @State private var scale: CGFloat = 0.95
+    
+    var body: some View {
+        VStack {
+            // Sheet header
+            HStack {
+                Text("İzin Talebi Detayı")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation {
+                        isShowing = nil
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(AppColors.onSurfaceVariant.opacity(0.7))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            .padding(.bottom, 16)
+            
+            // Content
+            ScrollView {
+                VStack(spacing: 8) {
+                    LeaveDetailItem(label: "Stajyer", value: request.internName)
+                    LeaveDetailItem(label: "Stajyer ID", value: request.internId)
+                    LeaveDetailItem(label: "Başlangıç", value: request.startDate)
+                    LeaveDetailItem(label: "Bitiş", value: request.endDate)
+                    LeaveDetailItem(label: "Talep Tarihi", value: request.requestDate)
+                    
+                    // Calculate leave duration
+                    // In a real app, this would use proper date calculations
+                    let days = 3 // Placeholder
+                    LeaveDetailItem(label: "Toplam Süre", value: "\(days) gün")
+                    
+                    Divider().padding(.vertical, 8)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("İzin Nedeni:")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(AppColors.onSurface)
+                        
+                        Text(request.reason)
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.onSurfaceVariant)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    if request.status != .pending {
+                        Divider().padding(.vertical, 8)
+                        
+                        if let responseDate = request.responseDate {
+                            LeaveDetailItem(label: "Cevap Tarihi", value: responseDate)
+                        }
+                        
+                        if let note = request.responseNote, !note.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Notunuz:")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(AppColors.onSurface)
+                                
+                                Text(note)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(AppColors.onSurfaceVariant)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            
+            Spacer(minLength: 24)
+            
+            // Action buttons
+            if request.status == .pending {
+                HStack(spacing: 12) {
+                    Button(action: onReject) {
+                        HStack {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16))
+                            
+                            Text("Reddet")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .foregroundColor(AppColors.error)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .background(AppColors.error.opacity(0.1))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(AppColors.error, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Button(action: onApprove) {
+                        HStack {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 16))
+                            
+                            Text("Onayla")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .background(AppColors.success)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            } else {
+                Button(action: {
+                    withAnimation {
+                        isShowing = nil
+                    }
+                }) {
+                    Text("Kapat")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.vertical, 14)
+                        .frame(maxWidth: .infinity)
+                        .background(AppColors.primary)
+                        .cornerRadius(12)
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(24)
+        .background(AppColors.surface)
+        .cornerRadius(24)
+        .shadow(color: AppColors.shadow, radius: 20, x: 0, y: 10)
+        .padding(16)
+        .scaleEffect(scale)
+        .onAppear {
+            withAnimation(.spring()) {
+                scale = 1.0
+            }
+        }
+    }
+}
+
+struct LeaveDetailItem: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack {
+            Text("\(label):")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(AppColors.onSurfaceVariant)
+            
+            Spacer()
+            
+            Text(value)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppColors.onSurface)
+        }
+    }
+}
+
+struct RejectionSheet: View {
+    let request: LeaveRequest
+    @Binding var isShowing: LeaveRequest?
+    @State private var rejectionNote = ""
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Red Nedeni")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundColor(AppColors.onSurface)
+            
+            Text("Lütfen talebi reddetme nedeninizi belirtin:")
+                .font(.system(size: 16))
+                .foregroundColor(AppColors.onSurface)
+            
+            TextEditor(text: $rejectionNote)
+                .font(.system(size: 16))
+                .padding(8)
+                .frame(minHeight: 100)
+                .background(AppColors.surfaceVariant.opacity(0.5))
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(AppColors.onSurfaceVariant.opacity(0.3), lineWidth: 1)
+                )
+            
+            HStack(spacing: 12) {
+                Button(action: {
+                    withAnimation {
+                        isShowing = nil
+                    }
+                }) {
+                    Text("İptal")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.clear)
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(AppColors.onSurfaceVariant.opacity(0.5), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                
+                Button(action: {
+                    // Send rejection
+                    withAnimation {
+                        isShowing = nil
+                    }
+                }) {
+                    Text("Gönder")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .background(rejectionNote.isEmpty ? AppColors.error.opacity(0.5) : AppColors.error)
+                        .cornerRadius(12)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(rejectionNote.isEmpty)
+            }
+        }
+        .padding(24)
+        .background(AppColors.surface)
+        .cornerRadius(24)
+        .shadow(color: AppColors.shadow, radius: 20, x: 0, y: 10)
+        .padding(16)
+    }
+}
+
+// MARK: - Surveys Screen
+struct SurveysScreen: View {
+    @State private var selectedSurvey: Survey? = nil
+    @State private var entranceAnimationsFinished = false
+    @State private var showingSurveyDetail = false
+    
+    let surveys = [
+        Survey(
+            id: 1,
+            title: "Çalışan Memnuniyet Anketi",
+            description: "Bu anket çalışanların memnuniyet düzeylerini ölçmek için tasarlanmıştır.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Şirket içi iletişimi nasıl değerlendiriyorsunuz?",
+                    type: .multipleChoice,
+                    options: ["Çok İyi", "İyi", "Orta", "Kötü", "Çok Kötü"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Çalışma ortamının verimliliğinizi nasıl etkilediğini düşünüyorsunuz?",
+                    type: .multipleChoice,
+                    options: ["Olumlu Etkiliyor", "Kısmen Olumlu", "Etkilemiyor", "Kısmen Olumsuz", "Olumsuz Etkiliyor"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Şirketimizde iyileştirilmesi gereken alanlar nelerdir? Lütfen detaylı açıklayınız.",
+                    type: .essay
+                )
+            ],
+            creationDate: "15.03.2025",
+            dueDate: "30.03.2025"
+        ),
+        Survey(
+            id: 2,
+            title: "Staj Programı Değerlendirme Anketi",
+            description: "Staj programının etkinliğini değerlendirmek için bu anketi doldurmanızı rica ederiz.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Staj programını genel olarak nasıl değerlendirirsiniz?",
+                    type: .multipleChoice,
+                    options: ["Mükemmel", "Çok İyi", "İyi", "Ortalama", "Kötü"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Staj süresi yeterli miydi?",
+                    type: .multipleChoice,
+                    options: ["Çok Uzun", "Yeterli", "Çok Kısa"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Staj programı beklentilerinizi karşıladı mı? Neden?",
+                    type: .essay
+                ),
+                SurveyQuestion(
+                    id: 4,
+                    question: "Staj programında en beğendiğiniz yönler nelerdir?",
+                    type: .essay
+                )
+            ],
+            creationDate: "10.03.2025",
+            dueDate: "25.03.2025"
+        ),
+        Survey(
+            id: 3,
+            title: "Eğitim İhtiyaçları Değerlendirme Anketi",
+            description: "Gelecek dönem eğitim planlaması için görüşlerinizi belirtmenizi rica ederiz.",
+            questions: [
+                SurveyQuestion(
+                    id: 1,
+                    question: "Hangi alanlarda eğitim almak istersiniz?",
+                    type: .multipleChoice,
+                    options: ["Teknik Beceriler", "Liderlik", "İletişim", "Proje Yönetimi", "Yabancı Dil", "Diğer"]
+                ),
+                SurveyQuestion(
+                    id: 2,
+                    question: "Eğitim programlarının süresi ne kadar olmalı?",
+                    type: .multipleChoice,
+                    options: ["1-2 saat", "Yarım gün", "Tam gün", "Birkaç gün", "Haftalık"]
+                ),
+                SurveyQuestion(
+                    id: 3,
+                    question: "Hangi spesifik konularda eğitim almak istediğinizi belirtiniz.",
+                    type: .essay
+                )
+            ],
+            creationDate: "05.03.2025",
+            dueDate: "20.03.2025"
+        )
+    ]
+    
+    var body: some View {
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Header section with animation
+                    if entranceAnimationsFinished {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Anketler")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(AppColors.onPrimary)
+                            
+                            Text("Toplam \(surveys.count) anket")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                        }
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
+                    // Survey cards
+                    VStack(spacing: 16) {
+                        ForEach(Array(surveys.enumerated()), id: \.element.id) { index, survey in
+                            if entranceAnimationsFinished {
+                                SurveyCard(survey: survey) {
+                                    selectedSurvey = survey
+                                    showingSurveyDetail = true
+                                }
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity).animation(.easeInOut.delay(Double(index) * 0.05)),
+                                    removal: .opacity
+                                ))
+                                .padding(.horizontal)
+                            }
+                        }
+                    }
+                    
+                    Spacer(minLength: 80)
+                }
+                .padding(.vertical)
+            }
+            
+            // Detail view as a sheet or full-screen cover
+            if showingSurveyDetail, let survey = selectedSurvey {
+                SurveyDetailView(survey: survey, isShowing: $showingSurveyDetail)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct SurveyCard: View {
+    let survey: Survey
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 16) {
+                // Title and description
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(survey.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppColors.onSurface)
+                    
+                    Text(survey.description)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.onSurfaceVariant)
+                        .lineLimit(2)
+                }
+                
+                HStack {
+                    // Survey metadata
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "questionmark.bubble")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.primary)
+                            
+                            Text("\(survey.questions.count) Soru")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.onSurfaceVariant)
+                        }
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.primary)
+                            
+                            Text("Son Tarih: \(survey.dueDate)")
+                                .font(.system(size: 12))
+                                .foregroundColor(AppColors.onSurfaceVariant)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    // Start button
+                    Text("Başla")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(AppColors.primary)
+                        .cornerRadius(12)
+                }
+            }
+            .padding(20)
+            .background(AppColors.card)
+            .cornerRadius(20)
+            .shadow(color: AppColors.shadow.opacity(0.1), radius: 10, x: 0, y: 4)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct SurveyDetailView: View {
+    let survey: Survey
+    @Binding var isShowing: Bool
+    
+    @State private var selectedOptions: [Int: String] = [:]
+    @State private var textAnswers: [Int: String] = [:]
+    @State private var entranceAnimationsFinished = false
+    
+    var body: some View {
+        ZStack {
+            // Background
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(hex: "1A237E"),  // Dark blue
+                    Color(hex: "3949AB"),  // Blue
+                    Color(hex: "5C6BC0")   // Light blue
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                // Navigation bar
+                HStack {
+                    Button(action: {
+                        withAnimation {
+                            isShowing = false
+                        }
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(AppColors.onPrimary)
+                            .padding(8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    Spacer()
+                    
+                    Text(survey.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppColors.onPrimary)
+                    
+                    Spacer()
+                    
+                    // Placeholder for symmetry
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18))
+                        .foregroundColor(.clear)
+                        .padding(8)
+                }
+                .padding(.horizontal)
+                .padding(.top, 8)
+                
+                // Description
+                Text(survey.description)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.onPrimary.opacity(0.8))
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                
+                // Questions
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ForEach(Array(survey.questions.enumerated()), id: \.element.id) { index, question in
+                            if entranceAnimationsFinished {
+                                Group {
+                                    if question.type == .multipleChoice {
+                                        MultipleChoiceQuestionView(
+                                            question: question,
+                                            selectedOption: selectedOptions[question.id],
+                                            onOptionSelected: { option in
+                                                selectedOptions[question.id] = option
+                                            }
+                                        )
+                                    } else {
+                                        EssayQuestionView(
+                                            question: question,
+                                            answer: textAnswers[question.id] ?? "",
+                                            onAnswerChanged: { answer in
+                                                textAnswers[question.id] = answer
+                                            }
+                                        )
+                                    }
+                                }
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity).animation(.easeInOut.delay(Double(index) * 0.05)),
+                                    removal: .opacity
+                                ))
+                                .padding(.horizontal)
+                            }
+                        }
+                        
+                        Button(action: {
+                            // Submit survey
+                            withAnimation {
+                                isShowing = false
+                            }
+                        }) {
+                            Text("Anketi Gönder")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.vertical, 16)
+                                .frame(maxWidth: .infinity)
+                                .background(AppColors.primary)
+                                .cornerRadius(16)
+                                .shadow(color: AppColors.primary.opacity(0.4), radius: 10, x: 0, y: 5)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .padding()
+                        .padding(.bottom, 40)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    entranceAnimationsFinished = true
+                }
+            }
+        }
+    }
+}
+
+struct MultipleChoiceQuestionView: View {
+    let question: SurveyQuestion
+    let selectedOption: String?
+    let onOptionSelected: (String) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Question header
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Soru \(question.id)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+                
+                Text(question.question)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+            }
+            
+            // Options
+            VStack(spacing: 6) {
+                ForEach(question.options, id: \.self) { option in
+                    Button(action: {
+                        onOptionSelected(option)
+                    }) {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .stroke(
+                                        selectedOption == option ? AppColors.primary : AppColors.onSurfaceVariant.opacity(0.6),
+                                        lineWidth: 2
+                                    )
+                                    .frame(width: 20, height: 20)
+                                
+                                if selectedOption == option {
+                                    Circle()
+                                        .fill(AppColors.primary)
+                                        .frame(width: 12, height: 12)
+                                }
+                            }
+                            
+                            Text(option)
+                                .font(.system(size: 16))
+                                .foregroundColor(
+                                    selectedOption == option ? AppColors.primary : AppColors.onSurface
+                                )
+                                .fontWeight(selectedOption == option ? .medium : .regular)
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            selectedOption == option ? AppColors.primary.opacity(0.1) : Color.clear
+                        )
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+        .padding(16)
+        .background(AppColors.cardVariant)
+        .cornerRadius(16)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+}
+
+struct EssayQuestionView: View {
+    let question: SurveyQuestion
+    let answer: String
+    let onAnswerChanged: (String) -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Question header
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Soru \(question.id)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+                
+                Text(question.question)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppColors.onSurface)
+            }
+            
+            // Text area
+            TextEditor(text: Binding(
+                get: { answer },
+                set: { onAnswerChanged($0) }
+            ))
+            .font(.system(size: 16))
+            .padding(12)
+            .frame(minHeight: 100)
+            .background(AppColors.surface)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(AppColors.primary.opacity(0.3), lineWidth: 1)
+            )
+            .overlay(
+                Group {
+                    if answer.isEmpty {
+                        Text("Cevabınızı buraya yazın...")
+                            .font(.system(size: 16))
+                            .foregroundColor(AppColors.onSurfaceVariant.opacity(0.5))
+                            .padding(16)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .allowsHitTesting(false)
+                    }
+                }
+            )
+        }
+        .padding(16)
+        .background(AppColors.cardVariant)
+        .cornerRadius(16)
+        .shadow(color: AppColors.shadow.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+}
+
+// MARK: - Preview
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ModernAppUI()
+    }
+}
