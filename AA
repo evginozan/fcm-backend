@@ -1,0 +1,2218 @@
+// local-server.js
+const express = require('express');
+const http = require('http');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const path = require('path');
+const socketIO = require('socket.io');
+const { io } = require('socket.io-client');
+const https = require('https');
+require('dotenv').config();
+
+// Express uygulaması oluştur
+const app = express();
+const server = http.createServer(app);
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// MongoDB bağlantısı - Geliştirilmiş hata yakalama ve loglama ile
+const connectDB = async () => {
+    try {
+        const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bildirim_db', {
+            useNewUrlParser: true,
+            useUnifiedTopology: true
+        });
+        console.log(`MongoDB bağlantısı başarılı: ${conn.connection.host}`);
+        
+        // Bağlantı açık mı test et
+        const collections = await mongoose.connection.db.listCollections().toArray();
+        console.log(`Veritabanında ${collections.length} koleksiyon bulundu.`);
+        return true;
+    } catch (err) {
+        console.error('MongoDB bağlantı hatası:', err);
+        console.error('Hata detayları:', Object.keys(err));
+        console.error('Hata mesajı:', err.message);
+        console.error('Hata kodu:', err.code);
+        // Process.exit yerine false döndür
+        return false;
+    }
+};
+
+// Veritabanı bağlantısını başlat
+const dbConnected = connectDB();
+
+// Kullanıcı Şeması ve Modeli
+const userSchema = new mongoose.Schema({
+    email: {
+        type: String,
+        required: true,
+        unique: true
+    },
+    roleTopic: {
+        type: String,
+        required: true
+    },
+    periodTopic: {
+        type: String,
+        required: true
+    },
+    token: {
+        type: String,
+        required: true
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    }
+});
+
+// MongoDB bağlantı hatası durumunda model oluşturma hatasını önle
+const User = mongoose.connection.readyState === 1 
+    ? mongoose.model('User', userSchema)
+    : null;
+
+// In-memory kullanıcı deposu (MongoDB bağlantısı olmadığında)
+const inMemoryUsers = new Map();
+
+// Socket.IO client - Render'daki backend'e bağlanma - Geliştirilmiş bağlantı ayarları
+const renderBackendUrl = process.env.RENDER_BACKEND_URL || 'https://fcm-backend.onrender.com';
+
+// Özel HTTP başlıkları ve ajanı oluştur
+const customHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+};
+
+const customAgent = new https.Agent({
+    rejectUnauthorized: false // Kısıtlı ağlarda sertifika hatalarını atla
+});
+
+// Socket.IO client bağlantısı - kısıtlı ağlar için özel ayarlarla
+const socketClient = io(renderBackendUrl, {
+    extraHeaders: customHeaders,
+    agent: customAgent,
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 5000
+});
+
+socketClient.on('connect', () => {
+    console.log('Render backend\'e Socket.IO bağlantısı kuruldu');
+});
+
+socketClient.on('disconnect', () => {
+    console.log('Render backend\'den bağlantı kesildi');
+});
+
+socketClient.on('connect_error', (error) => {
+    console.error('Socket.IO bağlantı hatası (connect_error):', error.message);
+});
+
+socketClient.on('error', (error) => {
+    console.error('Socket.IO genel hata:', error);
+});
+
+// Render backend'den gelen kullanıcı kayıt isteklerini dinle
+socketClient.on('register-user-http', async (userData) => {
+    try {
+        console.log('Render backend\'den kullanıcı kayıt isteği:', userData);
+
+        // Gerekli alanların doğrulaması
+        const { email, roleTopic, periodTopic, token } = userData;
+
+        // Email ve token kontrolü
+        if (!email || !token) {
+            console.error('Email ve token zorunludur');
+            return;
+        }
+
+        // MongoDB veya in-memory depolama kullan
+        if (User) {
+            // MongoDB bağlantısı varsa
+            try {
+                // Kullanıcı var mı kontrol et
+                const existingUser = await User.findOne({ email });
+
+                if (existingUser) {
+                    // Kullanıcı varsa güncelle
+                    existingUser.roleTopic = roleTopic;
+                    existingUser.periodTopic = periodTopic;
+                    existingUser.token = token;
+                    existingUser.updatedAt = Date.now();
+
+                    await existingUser.save();
+                    console.log(`Kullanıcı güncellendi (MongoDB): ${email}`);
+                } else {
+                    // Yeni kullanıcı oluştur
+                    const newUser = new User({
+                        email,
+                        roleTopic,
+                        periodTopic,
+                        token
+                    });
+
+                    await newUser.save();
+                    console.log(`Yeni kullanıcı kaydedildi (MongoDB): ${email}`);
+                }
+            } catch (dbError) {
+                console.error('MongoDB işlemi sırasında hata:', dbError);
+                // Hata durumunda in-memory'ye kaydet
+                saveUserToMemory(userData);
+            }
+        } else {
+            // MongoDB bağlantısı yoksa in-memory'de sakla
+            saveUserToMemory(userData);
+        }
+    } catch (error) {
+        console.error('Kullanıcı kayıt hatası:', error);
+    }
+});
+
+// In-memory kullanıcı kaydetme fonksiyonu
+function saveUserToMemory(userData) {
+    const { email, roleTopic, periodTopic, token } = userData;
+    
+    inMemoryUsers.set(email, {
+        email,
+        roleTopic,
+        periodTopic,
+        token,
+        createdAt: inMemoryUsers.has(email) ? inMemoryUsers.get(email).createdAt : new Date(),
+        updatedAt: new Date()
+    });
+    
+    console.log(`Kullanıcı in-memory depolandı: ${email}`);
+}
+
+// Render backend'den gelen token güncelleme isteklerini dinle
+socketClient.on('update-token-http', async (updateData) => {
+    try {
+        console.log('Render backend\'den token güncelleme isteği:', updateData);
+
+        const { email, token } = updateData;
+
+        if (!email || !token) {
+            console.error('Email ve token zorunludur');
+            return;
+        }
+
+        // MongoDB veya in-memory'de güncelleme
+        if (User) {
+            try {
+                const user = await User.findOne({ email });
+
+                if (!user) {
+                    console.error('Kullanıcı bulunamadı (MongoDB):', email);
+                    // Eğer in-memory'de varsa onu güncelle
+                    if (inMemoryUsers.has(email)) {
+                        const memUser = inMemoryUsers.get(email);
+                        memUser.token = token;
+                        memUser.updatedAt = new Date();
+                        inMemoryUsers.set(email, memUser);
+                        console.log(`Token güncellendi (in-memory): ${email}`);
+                    }
+                    return;
+                }
+
+                user.token = token;
+                user.updatedAt = Date.now();
+                await user.save();
+
+                console.log(`Token güncellendi (MongoDB): ${email}`);
+            } catch (dbError) {
+                console.error('MongoDB token güncelleme hatası:', dbError);
+                // Hata durumunda in-memory'yi güncelle
+                if (inMemoryUsers.has(email)) {
+                    const memUser = inMemoryUsers.get(email);
+                    memUser.token = token;
+                    memUser.updatedAt = new Date();
+                    inMemoryUsers.set(email, memUser);
+                    console.log(`Token güncellendi (in-memory - fallback): ${email}`);
+                }
+            }
+        } else {
+            // MongoDB bağlantısı yoksa in-memory'de güncelle
+            if (inMemoryUsers.has(email)) {
+                const memUser = inMemoryUsers.get(email);
+                memUser.token = token;
+                memUser.updatedAt = new Date();
+                inMemoryUsers.set(email, memUser);
+                console.log(`Token güncellendi (in-memory): ${email}`);
+            } else {
+                console.error('Kullanıcı bulunamadı (in-memory):', email);
+            }
+        }
+    } catch (error) {
+        console.error('Token güncelleme hatası:', error);
+    }
+});
+
+// Bildirim durumu güncellemeleri
+socketClient.on('notification-sent', (data) => {
+    console.log('Bildirim gönderildi:', data);
+    // Bu bilgiyi web arayüzüne iletebiliriz
+    io.emit('notification-status-update', {
+        type: 'sent',
+        ...data
+    });
+});
+
+socketClient.on('notification-error', (data) => {
+    console.error('Bildirim hatası:', data);
+    // Bu hatayı web arayüzüne iletebiliriz
+    io.emit('notification-status-update', {
+        type: 'error',
+        ...data
+    });
+});
+
+// Socket.IO server - Web arayüzü için
+const io = socketIO(server);
+
+io.on('connection', (socket) => {
+    console.log('Yeni bir istemci bağlandı:', socket.id);
+
+    // Web arayüzünden bildirim gönderme istekleri
+    socket.on('send-notification-request', (notificationData) => {
+        console.log('Bildirim gönderme isteği alındı:', notificationData);
+
+        // Render backend'e bildirim gönderme isteği ilet
+        socketClient.emit('send-notification', notificationData, (response) => {
+            // Yanıtı web arayüzüne ilet
+            socket.emit('notification-status', response);
+        });
+
+        // Web arayüzüne bildirim durumu iletilir
+        socket.emit('notification-processing', {
+            ...notificationData,
+            timestamp: new Date().toISOString()
+        });
+    });
+
+    // Canlılık kontrolü
+    socket.on('ping', () => {
+        socket.emit('pong', { time: new Date().toISOString() });
+    });
+
+    socket.on('disconnect', () => {
+        console.log('İstemci bağlantısı kesildi:', socket.id);
+    });
+});
+
+// API Routes
+
+// Kullanıcı Kayıt - Render backend'den gelen istekleri işler ve MongoDB'ye kaydeder
+app.post('/api/register', async (req, res) => {
+    try {
+        const { email, roleTopic, periodTopic, token } = req.body;
+
+        // Email ve token kontrolü
+        if (!email || !token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email ve token zorunludur'
+            });
+        }
+
+        // MongoDB veya in-memory kayıt
+        if (User) {
+            try {
+                // Kullanıcı var mı kontrol et
+                const existingUser = await User.findOne({ email });
+
+                if (existingUser) {
+                    // Kullanıcı varsa güncelle
+                    existingUser.roleTopic = roleTopic;
+                    existingUser.periodTopic = periodTopic;
+                    existingUser.token = token;
+                    existingUser.updatedAt = Date.now();
+
+                    await existingUser.save();
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Kullanıcı bilgileri güncellendi (MongoDB)'
+                    });
+                } else {
+                    // Yeni kullanıcı oluştur
+                    const newUser = new User({
+                        email,
+                        roleTopic,
+                        periodTopic,
+                        token
+                    });
+
+                    await newUser.save();
+
+                    return res.status(201).json({
+                        success: true,
+                        message: 'Kullanıcı başarıyla kaydedildi (MongoDB)'
+                    });
+                }
+            } catch (dbError) {
+                console.error('MongoDB kayıt hatası:', dbError);
+                // Hata durumunda in-memory'ye kaydet ve kullanıcıya bildir
+                saveUserToMemory(req.body);
+                return res.status(207).json({
+                    success: true,
+                    message: 'Kullanıcı geçici olarak kaydedildi (in-memory). MongoDB hatası: ' + dbError.message
+                });
+            }
+        } else {
+            // MongoDB bağlantısı yoksa in-memory'de sakla
+            saveUserToMemory(req.body);
+            return res.status(202).json({
+                success: true,
+                message: 'Kullanıcı geçici olarak kaydedildi (in-memory). MongoDB bağlantısı yok.'
+            });
+        }
+    } catch (error) {
+        console.error('Kullanıcı kayıt hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Token Güncelleme - Render backend'den gelen istekleri işler
+app.post('/api/update-token', async (req, res) => {
+    try {
+        const { email, token } = req.body;
+
+        if (!email || !token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email ve token zorunludur'
+            });
+        }
+
+        // MongoDB veya in-memory güncelleme
+        if (User) {
+            try {
+                const user = await User.findOne({ email });
+
+                if (!user) {
+                    // MongoDB'de yoksa in-memory'de kontrol et
+                    if (inMemoryUsers.has(email)) {
+                        const memUser = inMemoryUsers.get(email);
+                        memUser.token = token;
+                        memUser.updatedAt = new Date();
+                        inMemoryUsers.set(email, memUser);
+
+                        return res.status(200).json({
+                            success: true,
+                            message: 'Token başarıyla güncellendi (in-memory)'
+                        });
+                    }
+
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Kullanıcı bulunamadı'
+                    });
+                }
+
+                user.token = token;
+                user.updatedAt = Date.now();
+                await user.save();
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Token başarıyla güncellendi (MongoDB)'
+                });
+            } catch (dbError) {
+                console.error('MongoDB token güncelleme hatası:', dbError);
+                
+                // In-memory güncelleme ile devam et
+                if (inMemoryUsers.has(email)) {
+                    const memUser = inMemoryUsers.get(email);
+                    memUser.token = token;
+                    memUser.updatedAt = new Date();
+                    inMemoryUsers.set(email, memUser);
+
+                    return res.status(207).json({
+                        success: true,
+                        message: 'Token geçici olarak güncellendi (in-memory). MongoDB hatası: ' + dbError.message
+                    });
+                }
+                
+                // Hiçbir şekilde kullanıcı bulunamazsa
+                return res.status(404).json({
+                    success: false,
+                    message: 'Kullanıcı bulunamadı ve MongoDB hatası: ' + dbError.message
+                });
+            }
+        } else {
+            // MongoDB bağlantısı yoksa in-memory'de güncelle
+            if (inMemoryUsers.has(email)) {
+                const memUser = inMemoryUsers.get(email);
+                memUser.token = token;
+                memUser.updatedAt = new Date();
+                inMemoryUsers.set(email, memUser);
+
+                return res.status(200).json({
+                    success: true,
+                    message: 'Token başarıyla güncellendi (in-memory)'
+                });
+            }
+
+            return res.status(404).json({
+                success: false,
+                message: 'Kullanıcı bulunamadı ve MongoDB bağlantısı yok'
+            });
+        }
+    } catch (error) {
+        console.error('Token güncelleme hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Tüm kullanıcıları getir (Web arayüzü için) - MongoDB ve in-memory birleşimi
+app.get('/api/users', async (req, res) => {
+    try {
+        let users = [];
+        
+        // MongoDB'den kullanıcıları al (bağlantı varsa)
+        if (User) {
+            try {
+                const dbUsers = await User.find().sort({ updatedAt: -1 });
+                users = [...dbUsers];
+                console.log(`MongoDB'den ${dbUsers.length} kullanıcı alındı`);
+            } catch (dbError) {
+                console.error('MongoDB kullanıcı listeleme hatası:', dbError);
+            }
+        }
+        
+        // In-memory kullanıcıları ekle (varsa)
+        if (inMemoryUsers.size > 0) {
+            const memUsers = Array.from(inMemoryUsers.values())
+                .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+            
+            // MongoDB'den alınan kullanıcılarla birleştir
+            // Aynı e-posta adresine sahip kullanıcıları tekrarlama
+            const allEmails = new Set(users.map(u => u.email));
+            
+            for (const memUser of memUsers) {
+                if (!allEmails.has(memUser.email)) {
+                    users.push(memUser);
+                    allEmails.add(memUser.email);
+                }
+            }
+            
+            console.log(`In-memory'den ${memUsers.length} kullanıcı alındı`);
+        }
+        
+        // Kullanıcıları yeniden sırala
+        users.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        
+        return res.status(200).json({
+            success: true,
+            data: users,
+            source: User ? (inMemoryUsers.size > 0 ? 'mixed' : 'mongodb') : 'memory'
+        });
+    } catch (error) {
+        console.error('Kullanıcı listeleme hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// FCM bildirim gönderme (Render backend'e socket.io ile istek gönderir)
+app.post('/api/send-notification', (req, res) => {
+    try {
+        const notificationData = req.body;
+
+        if (!notificationData.type || !notificationData.target || !notificationData.title || !notificationData.body) {
+            return res.status(400).json({
+                success: false,
+                message: 'Type, target, title ve body alanları zorunludur'
+            });
+        }
+
+        // Render backend'e bildirim gönderme isteği
+        socketClient.emit('send-notification', notificationData, (response) => {
+            // Yanıt callback üzerinden gelirse (optional)
+            if (response) {
+                return res.status(response.success ? 200 : 400).json(response);
+            }
+        });
+
+        // Callback olmasa bile isteği başarıyla aldığımızı bildirelim
+        return res.status(200).json({
+            success: true,
+            message: 'Bildirim isteği işleme alındı'
+        });
+    } catch (error) {
+        console.error('Bildirim gönderme hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Sistemin durumunu kontrol et
+app.get('/api/status', (req, res) => {
+    return res.status(200).json({
+        success: true,
+        mongodb: mongoose.connection.readyState === 1,
+        socketClient: socketClient.connected,
+        memoryUsers: inMemoryUsers.size,
+        time: new Date().toISOString()
+    });
+});
+
+// HTML sayfasını servis et
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Sunucuyu başlat
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`);
+    console.log(`MongoDB bağlantı durumu: ${mongoose.connection.readyState === 1 ? 'Bağlı' : 'Bağlı değil'}`);
+    console.log(`In-memory kullanıcı sayısı: ${inMemoryUsers.size}`);
+});
+
+// Hata yönetimi
+process.on('uncaughtException', (error) => {
+    console.error('Yakalanmayan istisna:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('İşlenmeyen söz reddi:', reason);
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// server.js - FCM Render Backend
+const express = require('express');
+const http = require('http');
+const socketIO = require('socket.io');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const admin = require('firebase-admin');
+const fs = require('fs');
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+
+// Express uygulaması oluştur
+const app = express();
+const server = http.createServer(app);
+
+// Firebase kimlik bilgilerini dosyadan yükle
+// Ana dizinde "firebase-credentials.json" dosyası olmalı
+const serviceAccountPath = path.join(__dirname, 'firebase-credentials.json');
+let serviceAccount;
+
+try {
+    serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+    console.log('Firebase kimlik bilgileri başarıyla yüklendi');
+} catch (error) {
+    console.error('Firebase kimlik bilgileri yüklenemedi:', error);
+    process.exit(1);
+}
+
+// Firebase Admin SDK'yı başlat
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
+// Middleware
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization", "User-Agent"]
+}));
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// Gönderilen mesajları takip etmek için basit bir in-memory depo
+const sentMessages = new Map();
+const deliveredMessages = new Map();
+const connectedClients = new Map();
+const pendingMessages = new Map(); // Offline clients için mesaj kuyruğu
+
+// Socket.IO sunucusu - geliştirilmiş ayarlar ve CORS desteği ile
+const io = socketIO(server, {
+    cors: {
+        origin: "*", // Tüm kökenlere izin ver
+        methods: ["GET", "POST"],
+        allowedHeaders: ["Content-Type", "Authorization", "User-Agent"],
+        credentials: true
+    },
+    pingTimeout: 60000, // 60 saniye ping timeout
+    pingInterval: 25000, // 25 saniye ping aralığı
+    connectTimeout: 30000 // 30 saniye bağlantı zaman aşımı
+});
+
+// Socket.io bağlantı yönetimi
+io.on('connection', (socket) => {
+    const clientId = socket.id;
+    const clientIP = socket.handshake.address;
+    const userAgent = socket.handshake.headers['user-agent'] || 'Bilinmiyor';
+    
+    console.log(`Yeni bir istemci bağlandı: ${clientId}`);
+    console.log(`IP: ${clientIP}, User-Agent: ${userAgent}`);
+    
+    // Client bilgilerini sakla
+    connectedClients.set(clientId, {
+        id: clientId,
+        ip: clientIP,
+        userAgent: userAgent,
+        connectedAt: new Date(),
+        lastActivity: new Date()
+    });
+    
+    // Yeni bağlantı bildirimi
+    socket.broadcast.emit('client-connected', { 
+        clientId, 
+        count: connectedClients.size 
+    });
+    
+    // Local backend'den gelen kullanıcı kayıt isteği
+    socket.on('register-user', async (userData, callback) => {
+        try {
+            // Aktivite zamanını güncelle
+            updateClientActivity(clientId);
+            
+            // İstek doğrulama
+            if (!userData.email || !userData.token) {
+                console.error('Eksik veri:', userData);
+                if (callback) {
+                    callback({
+                        success: false,
+                        message: 'Email ve token zorunludur'
+                    });
+                }
+                return;
+            }
+
+            console.log(`Kullanıcı kayıt isteği alındı: ${userData.email}`);
+            
+            // Tüm local client'lara yayınla
+            io.emit('register-user-http', userData);
+            
+            // Callback varsa yanıt gönder
+            if (callback) {
+                callback({
+                    success: true,
+                    message: 'Kullanıcı kaydı alındı, tüm istemcilere yayınlandı'
+                });
+            }
+        } catch (error) {
+            console.error('Kullanıcı kayıt hatası:', error);
+            if (callback) {
+                callback({
+                    success: false,
+                    message: error.message
+                });
+            }
+        }
+    });
+
+    // Local backend'den gelen token güncelleme isteği
+    socket.on('update-token', async (updateData, callback) => {
+        try {
+            // Aktivite zamanını güncelle
+            updateClientActivity(clientId);
+            
+            // İstek doğrulama
+            if (!updateData.email || !updateData.token) {
+                console.error('Eksik token verisi:', updateData);
+                if (callback) {
+                    callback({
+                        success: false,
+                        message: 'Email ve token zorunludur'
+                    });
+                }
+                return;
+            }
+
+            console.log(`Token güncelleme isteği alındı: ${updateData.email}`);
+            
+            // Tüm local client'lara yayınla
+            io.emit('update-token-http', updateData);
+            
+            // Callback varsa yanıt gönder
+            if (callback) {
+                callback({
+                    success: true,
+                    message: 'Token güncelleme isteği alındı ve tüm istemcilere yayınlandı'
+                });
+            }
+        } catch (error) {
+            console.error('Token güncelleme hatası:', error);
+            if (callback) {
+                callback({
+                    success: false,
+                    message: error.message
+                });
+            }
+        }
+    });
+
+    // Local backend'den gelen 'send-notification' olayını dinle
+    socket.on('send-notification', async (notificationData, callback) => {
+        try {
+            // Aktivite zamanını güncelle
+            updateClientActivity(clientId);
+            
+            console.log('Bildirim gönderme isteği alındı:', notificationData);
+            
+            const { type, target, title, body, data } = notificationData;
+
+            // İstek doğrulama
+            if (!type || !target || !title || !body) {
+                const error = { message: 'Eksik bilgi içeren bildirim isteği' };
+                console.error(error.message, notificationData);
+                
+                // Hata yanıtı
+                socket.emit('notification-error', error);
+                if (callback) callback({ success: false, ...error });
+                return;
+            }
+
+            // Benzersiz bir mesaj ID oluştur (yoksa)
+            const messageId = data?.messageId || uuidv4();
+
+            // Mesaj verilerini hazırla
+            const message = {
+                notification: {
+                    title,
+                    body
+                },
+                data: {
+                    ...(data || {}),
+                    message_id: messageId,
+                    timestamp: new Date().toISOString()
+                },
+                android: {
+                    priority: 'high',
+                    notification: {
+                        clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+                        channelId: 'high_importance_channel'
+                    }
+                },
+                apns: {
+                    payload: {
+                        aps: {
+                            contentAvailable: true,
+                            badge: 1,
+                            sound: 'default'
+                        }
+                    },
+                    headers: {
+                        'apns-priority': '10'
+                    }
+                }
+            };
+
+            // Token bazlı veya topic bazlı gönderim
+            let result;
+
+            try {
+                if (type === 'token') {
+                    // Token bazlı gönderim
+                    message.token = target;
+                    result = await admin.messaging().send(message);
+                } else if (type === 'topic') {
+                    // Topic bazlı gönderim
+                    message.topic = target;
+                    result = await admin.messaging().send(message);
+                } else {
+                    const error = { message: 'Geçersiz gönderim tipi' };
+                    socket.emit('notification-error', error);
+                    if (callback) callback({ success: false, ...error });
+                    return;
+                }
+            } catch (fcmError) {
+                console.error('FCM gönderim hatası:', fcmError);
+                
+                const error = { 
+                    message: fcmError.message,
+                    code: fcmError.code,
+                    details: fcmError.errorInfo
+                };
+                
+                socket.emit('notification-error', error);
+                if (callback) callback({ success: false, ...error });
+                return;
+            }
+
+            // Başarılı yanıt
+            console.log('Bildirim başarıyla gönderildi:', result);
+
+            // Mesaj kaydını tut
+            const messageRecord = {
+                ...notificationData,
+                sentAt: new Date(),
+                messageId,
+                result
+            };
+            
+            sentMessages.set(messageId, messageRecord);
+
+            // Tüm bağlı istemcilere bildir
+            io.emit('notification-sent', {
+                success: true,
+                messageId,
+                result,
+                sentAt: new Date().toISOString()
+            });
+            
+            // İstekte bulunan istemciye özel yanıt
+            if (callback) {
+                callback({
+                    success: true,
+                    messageId,
+                    result
+                });
+            }
+        } catch (error) {
+            console.error('Bildirim gönderilirken genel hata oluştu:', error);
+            socket.emit('notification-error', {
+                message: error.message,
+                code: error.code || 'UNKNOWN_ERROR'
+            });
+            
+            if (callback) {
+                callback({
+                    success: false,
+                    message: error.message,
+                    code: error.code || 'UNKNOWN_ERROR'
+                });
+            }
+        }
+    });
+
+    // Teslim onayı etkinliğini dinle
+    socket.on('delivery-confirmation', (data) => {
+        // Aktivite zamanını güncelle
+        updateClientActivity(clientId);
+        
+        const { messageId } = data;
+
+        if (!messageId) {
+            socket.emit('confirmation-error', { message: 'MessageId gereklidir' });
+            return;
+        }
+
+        const message = sentMessages.get(messageId);
+
+        if (!message) {
+            socket.emit('confirmation-error', { message: 'Bu ID ile mesaj bulunamadı' });
+            return;
+        }
+
+        // Teslim zamanını kaydet
+        deliveredMessages.set(messageId, {
+            ...message,
+            deliveredAt: new Date()
+        });
+
+        console.log(`Mesaj teslim edildi: ${messageId}`);
+        socket.emit('confirmation-success', { messageId });
+        
+        // Tüm istemcilere bildir
+        io.emit('message-delivered', { 
+            messageId, 
+            deliveredAt: new Date().toISOString() 
+        });
+    });
+
+    // Local backend'den kullanıcı listesi isteği
+    socket.on('get-users', (data, callback) => {
+        // Aktivite zamanını güncelle
+        updateClientActivity(clientId);
+        
+        // Bu istek socket.io üzerinden local backend'e iletilecek
+        console.log('Kullanıcı listesi isteniyor, istek tüm local istemcilere iletildi');
+        
+        // Tüm istemcilere yayınla
+        socket.broadcast.emit('get-users-request', { requesterId: clientId });
+        
+        if (callback) {
+            callback({
+                success: true,
+                message: 'Kullanıcı verileri isteği gönderildi'
+            });
+        }
+    });
+    
+    // Local backend'den gelen kullanıcı listesi yanıtı
+    socket.on('users-response', (userData) => {
+        // Aktivite zamanını güncelle
+        updateClientActivity(clientId);
+        
+        const { requesterId, users } = userData;
+        
+        // İstek sahibine doğrudan yanıt ver
+        if (requesterId && io.sockets.sockets.has(requesterId)) {
+            io.to(requesterId).emit('users-data', { 
+                users, 
+                source: socket.id 
+            });
+            console.log(`Kullanıcı verisi ${requesterId} istemcisine iletildi`);
+        }
+    });
+    
+    // Canlılık kontrolü
+    socket.on('ping', (data, callback) => {
+        // Aktivite zamanını güncelle
+        updateClientActivity(clientId);
+        
+        const responseData = { 
+            time: new Date().toISOString(),
+            serverTime: Date.now(),
+            clientsCount: connectedClients.size
+        };
+        
+        // Socket.io 'callback' ile cevap ver (varsa)
+        if (callback && typeof callback === 'function') {
+            callback(responseData);
+        } else {
+            // Yoksa 'pong' olayıyla cevap ver
+            socket.emit('pong', responseData);
+        }
+    });
+    
+    // Local backend'den gelen mesaj olayı
+    socket.on('message', (message) => {
+        // Aktivite zamanını güncelle
+        updateClientActivity(clientId);
+        
+        console.log(`Mesaj alındı (${clientId}): ${message}`);
+        
+        // Echo yanıtı gönder
+        socket.emit('message-echo', {
+            original: message,
+            time: new Date().toISOString(),
+            echo: `Echo: ${message}`
+        });
+        
+        // Server zamanını gönder (örnek)
+        socket.emit('server-time', new Date().toISOString());
+    });
+
+    // Bağlantı kesildiğinde
+    socket.on('disconnect', () => {
+        console.log('İstemci bağlantısı kesildi:', clientId);
+        
+        // Client kaydını sil
+        connectedClients.delete(clientId);
+        
+        // Diğer istemcilere bildir
+        socket.broadcast.emit('client-disconnected', { 
+            clientId, 
+            count: connectedClients.size 
+        });
+    });
+});
+
+// Client aktivitesini güncelle
+function updateClientActivity(clientId) {
+    if (connectedClients.has(clientId)) {
+        const client = connectedClients.get(clientId);
+        client.lastActivity = new Date();
+        connectedClients.set(clientId, client);
+    }
+}
+
+// API Routes - Artık çoğu işlem Socket.IO üzerinden yapılacak
+
+// Android uygulamasından gelen register isteğini işle
+app.post('/api/register', async (req, res) => {
+    try {
+        const userData = req.body;
+        
+        // İstek doğrulama
+        if (!userData.email || !userData.token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email ve token zorunludur'
+            });
+        }
+
+        // Socket.IO ile tüm bağlı local backend'lere bildirim
+        io.emit('register-user-http', userData);
+        console.log(`API üzerinden kullanıcı kaydı alındı ve yayınlandı: ${userData.email}`);
+
+        // Kullanıcıya başarılı yanıt ver
+        return res.status(200).json({
+            success: true,
+            message: 'Kayıt isteği alındı ve işleme konuldu'
+        });
+    } catch (error) {
+        console.error('Kullanıcı kayıt hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Token güncelleme isteğini işle
+app.post('/api/update-token', async (req, res) => {
+    try {
+        const updateData = req.body;
+        
+        // İstek doğrulama
+        if (!updateData.email || !updateData.token) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email ve token zorunludur'
+            });
+        }
+
+        // Socket.IO ile tüm local backend'lere bildirim
+        io.emit('update-token-http', updateData);
+        console.log(`API üzerinden token güncelleme alındı ve yayınlandı: ${updateData.email}`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Token güncelleme isteği alındı'
+        });
+    } catch (error) {
+        console.error('Token güncelleme hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Bildirim gönderme
+app.post('/api/send-notification', async (req, res) => {
+    try {
+        const notificationData = req.body;
+        
+        // İstek doğrulama
+        if (!notificationData.type || !notificationData.target || !notificationData.title || !notificationData.body) {
+            return res.status(400).json({
+                success: false,
+                message: 'Type, target, title ve body alanları zorunludur'
+            });
+        }
+
+        // Benzersiz bir mesaj ID oluştur
+        const messageId = notificationData.data?.messageId || uuidv4();
+        
+        // Mesaj verilerini hazırla
+        const message = {
+            notification: {
+                title: notificationData.title,
+                body: notificationData.body
+            },
+            data: {
+                ...(notificationData.data || {}),
+                message_id: messageId,
+                timestamp: new Date().toISOString()
+            },
+            android: {
+                priority: 'high',
+                notification: {
+                    clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+                    channelId: 'high_importance_channel'
+                }
+            },
+            apns: {
+                payload: {
+                    aps: {
+                        contentAvailable: true,
+                        badge: 1,
+                        sound: 'default'
+                    }
+                },
+                headers: {
+                    'apns-priority': '10'
+                }
+            }
+        };
+
+        // Token bazlı veya topic bazlı gönderim
+        let result;
+
+        try {
+            if (notificationData.type === 'token') {
+                // Token bazlı gönderim
+                message.token = notificationData.target;
+                result = await admin.messaging().send(message);
+            } else if (notificationData.type === 'topic') {
+                // Topic bazlı gönderim
+                message.topic = notificationData.target;
+                result = await admin.messaging().send(message);
+            } else {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Geçersiz gönderim tipi'
+                });
+            }
+        } catch (fcmError) {
+            console.error('FCM gönderim hatası:', fcmError);
+            return res.status(500).json({
+                success: false,
+                message: fcmError.message,
+                code: fcmError.code,
+                details: fcmError.errorInfo
+            });
+        }
+
+        // Başarılı yanıt
+        console.log('API üzerinden bildirim başarıyla gönderildi:', result);
+
+        // Mesaj kaydını tut
+        sentMessages.set(messageId, {
+            ...notificationData,
+            sentAt: new Date(),
+            messageId,
+            result
+        });
+
+        // Tüm bağlı istemcilere bildir
+        io.emit('notification-sent', {
+            success: true,
+            messageId,
+            result,
+            sentAt: new Date().toISOString()
+        });
+
+        return res.status(200).json({
+            success: true,
+            messageId,
+            result
+        });
+    } catch (error) {
+        console.error('API bildirim hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Teslim onayı - Doğrudan Render backend'inde işlenir
+app.post('/api/confirm-delivery', async (req, res) => {
+    try {
+        const { messageId } = req.body;
+
+        if (!messageId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Message ID zorunludur'
+            });
+        }
+
+        const message = sentMessages.get(messageId);
+
+        if (!message) {
+            return res.status(404).json({
+                success: false,
+                message: 'Bu ID ile mesaj bulunamadı'
+            });
+        }
+
+        // Teslim zamanını kaydet
+        deliveredMessages.set(messageId, {
+            ...message,
+            deliveredAt: new Date()
+        });
+
+        console.log(`API üzerinden mesaj teslim onayı alındı: ${messageId}`);
+
+        // Tüm bağlı istemcilere bildir
+        io.emit('message-delivered', { 
+            messageId, 
+            deliveredAt: new Date().toISOString() 
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Teslim onayı alındı'
+        });
+    } catch (error) {
+        console.error('Teslim onayı hatası:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Sunucu hatası',
+            error: error.message
+        });
+    }
+});
+
+// Basit API endpoint'leri
+app.get('/', (req, res) => {
+    res.send('FCM Test Render Backend - Aktif');
+});
+
+// İstatistikler
+app.get('/api/stats', (req, res) => {
+    const data = {
+        sentCount: sentMessages.size,
+        deliveredCount: deliveredMessages.size,
+        deliveryRate: sentMessages.size > 0 ? (deliveredMessages.size / sentMessages.size) * 100 : 0,
+        connectedClients: connectedClients.size,
+        clients: Array.from(connectedClients.values()).map(client => ({
+            id: client.id,
+            connectedAt: client.connectedAt,
+            lastActivity: client.lastActivity
+        })),
+        uptime: process.uptime()
+    };
+    
+    res.json(data);
+});
+
+// Son gönderilen mesajlar
+app.get('/api/messages', (req, res) => {
+    const messages = Array.from(sentMessages.values())
+        .sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt))
+        .slice(0, 50);  // Son 50 mesajı döndür
+
+    res.json(messages);
+});
+
+// Canlılık kontrolü için endpoint
+app.get('/ping', (req, res) => {
+    res.status(200).send('pong');
+});
+
+// Bağlı istemciler listesi
+app.get('/api/clients', (req, res) => {
+    const clients = Array.from(connectedClients.values()).map(client => ({
+        id: client.id,
+        ip: client.ip,
+        userAgent: client.userAgent,
+        connectedAt: client.connectedAt,
+        lastActivity: client.lastActivity,
+        idle: Date.now() - new Date(client.lastActivity).getTime()
+    }));
+    
+    res.json({
+        count: clients.length,
+        clients
+    });
+});
+
+// Node.js otomatik bellek temizliği için periyodik işlem
+setInterval(() => {
+    // İnaktif istemcileri kontrol et (30 dakika)
+    const now = Date.now();
+    const inactiveThreshold = 30 * 60 * 1000; // 30 dakika
+    
+    connectedClients.forEach((client, id) => {
+        const lastActivity = new Date(client.lastActivity).getTime();
+        if (now - lastActivity > inactiveThreshold) {
+            console.log(`İnaktif istemci temizleniyor: ${id}`);
+            connectedClients.delete(id);
+            
+            // Eğer socket hala açıksa强制关闭
+            const socket = io.sockets.sockets.get(id);
+            if (socket) {
+                socket.disconnect(true);
+            }
+        }
+    });
+    
+    // 24 saatten eski mesajları temizle
+    const oldMessageThreshold = 24 * 60 * 60 * 1000; // 24 saat
+    
+    sentMessages.forEach((message, id) => {
+        const sentAt = new Date(message.sentAt).getTime();
+        if (now - sentAt > oldMessageThreshold) {
+            sentMessages.delete(id);
+            deliveredMessages.delete(id);
+        }
+    });
+    
+    // Bellek kullanımını logla
+    const memoryUsage = process.memoryUsage();
+    console.log('Bellek kullanımı:', {
+        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)} MB`,
+        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`,
+        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB`,
+        external: `${Math.round(memoryUsage.external / 1024 / 1024)} MB`,
+    });
+}, 15 * 60 * 1000); // 15 dakikada bir çalıştır
+
+// Dinlemeye başla
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+    console.log(`FCM Render Backend http://localhost:${PORT} adresinde çalışıyor`);
+    console.log(`Node.js sürümü: ${process.version}`);
+    console.log(`İşletim sistemi: ${process.platform}`);
+});
+
+// Hata yönetimi
+process.on('uncaughtException', (error) => {
+    console.error('Yakalanmayan istisna:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('İşlenmeyen söz reddi:', reason);
+});
+
+// Sunucu düzgün kapatma
+process.on('SIGTERM', () => {
+    console.log('SIGTERM sinyali alındı, server düzgün kapatılıyor...');
+    
+    io.close(() => {
+        console.log('Socket.IO sunucusu kapatıldı');
+        server.close(() => {
+            console.log('HTTP sunucusu kapatıldı');
+            process.exit(0);
+        });
+    });
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FCM Bildirim Yönetimi</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f8f9fa;
+        }
+        .card {
+            margin-bottom: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #f1f8ff;
+            border-bottom: 1px solid #dee2e6;
+            font-weight: bold;
+        }
+        .badge {
+            font-size: 0.8em;
+        }
+        .table th {
+            background-color: #f8f9fa;
+        }
+        .notification-history {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status-badge {
+            min-width: 80px;
+        }
+        .system-status {
+            font-size: 0.9em;
+        }
+        .timestamp {
+            font-size: 0.85em;
+            color: #6c757d;
+        }
+        .user-row:hover {
+            background-color: #f1f8ff;
+            cursor: pointer;
+        }
+        #loadingIndicator {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.7);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+        .nav-tabs .nav-link.active {
+            font-weight: bold;
+            border-bottom: 3px solid #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <!-- Yükleniyor göstergesi -->
+    <div id="loadingIndicator">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Yükleniyor...</span>
+        </div>
+    </div>
+
+    <!-- Bildirim toast -->
+    <div class="toast align-items-center text-white bg-success border-0" role="alert" aria-live="assertive" aria-atomic="true" id="notificationToast">
+        <div class="d-flex">
+            <div class="toast-body" id="toastMessage">
+                İşlem başarıyla tamamlandı.
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Kapat"></button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1 class="text-center mb-4">FCM Bildirim Yönetim Sistemi</h1>
+        
+        <!-- Sistem Durumu -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Sistem Durumu</span>
+                <button class="btn btn-sm btn-outline-primary" id="refreshStatusBtn">
+                    <i class="bi bi-arrow-clockwise"></i> Yenile
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="row system-status">
+                    <div class="col-md-3 mb-3">
+                        <div class="d-flex justify-content-between">
+                            <strong>MongoDB:</strong>
+                            <span id="mongoStatus">
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="d-flex justify-content-between">
+                            <strong>Render Bağlantısı:</strong>
+                            <span id="socketStatus">
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="d-flex justify-content-between">
+                            <strong>Kullanıcı Sayısı:</strong>
+                            <span id="userCount">
+                                <span class="spinner-border spinner-border-sm" role="status"></span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <div class="d-flex justify-content-between">
+                            <strong>Son Güncelleme:</strong>
+                            <span id="lastUpdate">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ana İçerik -->
+        <ul class="nav nav-tabs mb-4" id="mainTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-tab-pane" type="button" role="tab" aria-controls="users-tab-pane" aria-selected="true">Kullanıcılar</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="notifications-tab" data-bs-toggle="tab" data-bs-target="#notifications-tab-pane" type="button" role="tab" aria-controls="notifications-tab-pane" aria-selected="false">Bildirim Gönder</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history-tab-pane" type="button" role="tab" aria-controls="history-tab-pane" aria-selected="false">Bildirim Geçmişi</button>
+            </li>
+        </ul>
+        
+        <div class="tab-content" id="mainTabContent">
+            <!-- Kullanıcılar Sekmesi -->
+            <div class="tab-pane fade show active" id="users-tab-pane" role="tabpanel" aria-labelledby="users-tab" tabindex="0">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Kayıtlı Kullanıcılar</span>
+                        <button class="btn btn-sm btn-outline-primary" id="refreshUsersBtn">
+                            <i class="bi bi-arrow-clockwise"></i> Yenile
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Email</th>
+                                        <th>Rol Topic</th>
+                                        <th>Dönem Topic</th>
+                                        <th>Oluşturulma</th>
+                                        <th>Son Güncelleme</th>
+                                        <th>İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="usersTableBody">
+                                    <tr>
+                                        <td colspan="6" class="text-center">
+                                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            Kullanıcılar yükleniyor...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bildirim Gönder Sekmesi -->
+            <div class="tab-pane fade" id="notifications-tab-pane" role="tabpanel" aria-labelledby="notifications-tab" tabindex="0">
+                <div class="card">
+                    <div class="card-header">Bildirim Gönder</div>
+                    <div class="card-body">
+                        <form id="notificationForm">
+                            <div class="mb-3">
+                                <label for="notificationType" class="form-label">Bildirim Tipi</label>
+                                <select class="form-select" id="notificationType" required>
+                                    <option value="">Seçiniz</option>
+                                    <option value="token">Token Bazlı (Tek Kişi)</option>
+                                    <option value="topic">Topic Bazlı (Grup)</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3" id="tokenSelectContainer" style="display: none;">
+                                <label for="tokenSelect" class="form-label">Kullanıcı</label>
+                                <select class="form-select" id="tokenSelect">
+                                    <option value="">Kullanıcı seçiniz</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3" id="topicSelectContainer" style="display: none;">
+                                <label for="topicSelect" class="form-label">Topic</label>
+                                <select class="form-select" id="topicSelect">
+                                    <option value="">Topic seçiniz</option>
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="notificationTitle" class="form-label">Başlık</label>
+                                <input type="text" class="form-control" id="notificationTitle" required>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="notificationBody" class="form-label">Mesaj</label>
+                                <textarea class="form-control" id="notificationBody" rows="3" required></textarea>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="notificationData" class="form-label">Ekstra Veri (JSON, opsiyonel)</label>
+                                <textarea class="form-control" id="notificationData" rows="3" placeholder='{"key1": "value1", "key2": "value2"}'></textarea>
+                                <div class="form-text">Geçerli JSON formatında olmalıdır.</div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">Bildirim Gönder</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bildirim Geçmişi Sekmesi -->
+            <div class="tab-pane fade" id="history-tab-pane" role="tabpanel" aria-labelledby="history-tab" tabindex="0">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Bildirim Geçmişi</span>
+                        <button class="btn btn-sm btn-outline-primary" id="refreshHistoryBtn">
+                            <i class="bi bi-arrow-clockwise"></i> Yenile
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="notification-history">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Zaman</th>
+                                        <th>Tip</th>
+                                        <th>Hedef</th>
+                                        <th>Başlık</th>
+                                        <th>Mesaj</th>
+                                        <th>Durum</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historyTableBody">
+                                    <tr>
+                                        <td colspan="6" class="text-center">
+                                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                                            Bildirim geçmişi yükleniyor...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Kullanıcı Detay Modalı -->
+    <div class="modal fade" id="userDetailModal" tabindex="-1" aria-labelledby="userDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="userDetailModalLabel">Kullanıcı Detayı</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-control" id="userEmail" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Rol Topic</label>
+                        <input type="text" class="form-control" id="userRoleTopic" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Dönem Topic</label>
+                        <input type="text" class="form-control" id="userPeriodTopic" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">FCM Token</label>
+                        <textarea class="form-control" id="userToken" rows="3" readonly></textarea>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Oluşturulma Tarihi</label>
+                                <input type="text" class="form-control" id="userCreatedAt" readonly>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label class="form-label">Son Güncelleme</label>
+                                <input type="text" class="form-control" id="userUpdatedAt" readonly>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" id="sendToUserBtn">Bu Kullanıcıya Bildirim Gönder</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Kapat</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap ve Socket.IO -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.6.1/dist/socket.io.min.js"></script>
+    
+    <script>
+        // DOM yüklendikten sonra çalışacak kodlar
+        document.addEventListener('DOMContentLoaded', function() {
+            // Yardımcı Fonksiyonlar
+            function showLoading() {
+                document.getElementById('loadingIndicator').style.display = 'flex';
+            }
+            
+            function hideLoading() {
+                document.getElementById('loadingIndicator').style.display = 'none';
+            }
+            
+            function showToast(message, type = 'success') {
+                const toast = document.getElementById('notificationToast');
+                const toastMessage = document.getElementById('toastMessage');
+                
+                // Mesajı ayarla
+                toastMessage.textContent = message;
+                
+                // Toast tipini ayarla
+                toast.classList.remove('bg-success', 'bg-danger', 'bg-warning', 'bg-info');
+                toast.classList.add(`bg-${type}`);
+                
+                // Bootstrap toast'u göster
+                const bsToast = new bootstrap.Toast(toast);
+                bsToast.show();
+            }
+            
+            function formatDate(dateString) {
+                if (!dateString) return '-';
+                const date = new Date(dateString);
+                return date.toLocaleString('tr-TR');
+            }
+            
+            function truncateText(text, maxLength = 30) {
+                if (!text) return '-';
+                return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+            }
+            
+            // Socket.IO bağlantısı
+            const socket = io();
+            
+            // Socket.IO olayları
+            socket.on('connect', () => {
+                console.log('Socket.IO bağlantısı kuruldu');
+                document.getElementById('socketStatus').innerHTML = '<span class="badge bg-success">Bağlı</span>';
+                getSystemStatus();
+                loadUsersList();
+            });
+            
+            socket.on('disconnect', () => {
+                console.log('Socket.IO bağlantısı kesildi');
+                document.getElementById('socketStatus').innerHTML = '<span class="badge bg-danger">Bağlantı Kesildi</span>';
+            });
+            
+            socket.on('notification-processing', (data) => {
+                console.log('Bildirim işleniyor:', data);
+                showToast('Bildirim işleme alındı...', 'info');
+            });
+            
+            socket.on('notification-sent', (data) => {
+                console.log('Bildirim gönderildi:', data);
+                showToast('Bildirim başarıyla gönderildi!', 'success');
+                // Bildirim geçmişini güncelle
+                loadNotificationHistory();
+            });
+            
+            socket.on('notification-error', (data) => {
+                console.error('Bildirim hatası:', data);
+                showToast('Hata: ' + data.message, 'danger');
+            });
+            
+            socket.on('notification-status', (response) => {
+                console.log('Bildirim durumu:', response);
+                if (response.success) {
+                    showToast('Bildirim başarıyla gönderildi!', 'success');
+                } else {
+                    showToast('Hata: ' + response.message, 'danger');
+                }
+            });
+            
+            // Sistem durumu kontrolü
+            function getSystemStatus() {
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Sistem durumu:', data);
+                        
+                        // MongoDB durumu
+                        document.getElementById('mongoStatus').innerHTML = data.mongodb
+                            ? '<span class="badge bg-success">Bağlı</span>'
+                            : '<span class="badge bg-danger">Bağlantı Yok</span>';
+                        
+                        // Socket.IO durumu güncelle
+                        document.getElementById('socketStatus').innerHTML = data.socketClient
+                            ? '<span class="badge bg-success">Bağlı</span>'
+                            : '<span class="badge bg-danger">Bağlantı Yok</span>';
+                        
+                        // Kullanıcı sayısı
+                        document.getElementById('userCount').textContent = data.memoryUsers || '0';
+                        
+                        // Son güncelleme zamanı
+                        document.getElementById('lastUpdate').textContent = formatDate(data.time);
+                    })
+                    .catch(error => {
+                        console.error('Sistem durumu hatası:', error);
+                        showToast('Sistem durumu alınamadı!', 'danger');
+                    });
+            }
+            
+            // Kullanıcı listesi yükle
+            function loadUsersList() {
+                showLoading();
+                
+                fetch('/api/users')
+                    .then(response => response.json())
+                    .then(data => {
+                        hideLoading();
+                        
+                        if (!data.success) {
+                            throw new Error(data.message || 'Kullanıcılar alınamadı');
+                        }
+                        
+                        const users = data.data;
+                        const tableBody = document.getElementById('usersTableBody');
+                        
+                        // Tabloyu temizle
+                        tableBody.innerHTML = '';
+                        
+                        if (users.length === 0) {
+                            tableBody.innerHTML = '<tr><td colspan="6" class="text-center">Kayıtlı kullanıcı bulunamadı</td></tr>';
+                            return;
+                        }
+                        
+                        // Topics listesi oluştur
+                        const roleTopics = new Set();
+                        const periodTopics = new Set();
+                        
+                        // Kullanıcı listesini doldur
+                        users.forEach(user => {
+                            // Topic listelerini güncelle
+                            if (user.roleTopic) roleTopics.add(user.roleTopic);
+                            if (user.periodTopic) periodTopics.add(user.periodTopic);
+                            
+                            const row = document.createElement('tr');
+                            row.className = 'user-row';
+                            row.dataset.userId = user._id || user.email;
+                            
+                            row.innerHTML = `
+                                <td>${user.email}</td>
+                                <td><span class="badge bg-secondary">${user.roleTopic || '-'}</span></td>
+                                <td><span class="badge bg-info text-dark">${user.periodTopic || '-'}</span></td>
+                                <td class="timestamp">${formatDate(user.createdAt)}</td>
+                                <td class="timestamp">${formatDate(user.updatedAt)}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary view-user-btn" data-user-id="${user._id || user.email}">Detay</button>
+                                    <button class="btn btn-sm btn-outline-success send-notification-btn" data-user-id="${user._id || user.email}" data-token="${user.token}">Bildirim</button>
+                                </td>
+                            `;
+                            
+                            tableBody.appendChild(row);
+                        });
+                        
+                        // Bildirim formu için topic seçimlerini güncelle
+                        updateTopicSelects(Array.from(roleTopics), Array.from(periodTopics));
+                        
+                        // Token seçimini güncelle
+                        updateTokenSelect(users);
+                        
+                        // Kullanıcı detay butonları için olay dinleyicisi
+                        document.querySelectorAll('.view-user-btn').forEach(button => {
+                            button.addEventListener('click', function() {
+                                const userId = this.getAttribute('data-user-id');
+                                showUserDetail(userId, users);
+                            });
+                        });
+                        
+                        // Bildirim gönder butonları için olay dinleyicisi
+                        document.querySelectorAll('.send-notification-btn').forEach(button => {
+                            button.addEventListener('click', function() {
+                                const userId = this.getAttribute('data-user-id');
+                                const token = this.getAttribute('data-token');
+                                prepareNotificationToUser(userId, token, users);
+                            });
+                        });
+                    })
+                    .catch(error => {
+                        hideLoading();
+                        console.error('Kullanıcı listesi hatası:', error);
+                        document.getElementById('usersTableBody').innerHTML = 
+                            `<tr><td colspan="6" class="text-center text-danger">Hata: ${error.message}</td></tr>`;
+                        showToast('Kullanıcı listesi alınamadı: ' + error.message, 'danger');
+                    });
+            }
+            
+            // Topic seçimlerini güncelle
+            function updateTopicSelects(roleTopics, periodTopics) {
+                const topicSelect = document.getElementById('topicSelect');
+                
+                // Önceki seçimleri temizle (ilk seçeneği koru)
+                while (topicSelect.options.length > 1) {
+                    topicSelect.remove(1);
+                }
+                
+                // Rol topic başlığı ekle
+                const roleOptgroup = document.createElement('optgroup');
+                roleOptgroup.label = 'Rol Topicler';
+                
+                roleTopics.forEach(topic => {
+                    const option = document.createElement('option');
+                    option.value = topic;
+                    option.textContent = topic;
+                    roleOptgroup.appendChild(option);
+                });
+                
+                topicSelect.appendChild(roleOptgroup);
+                
+                // Dönem topic başlığı ekle
+                const periodOptgroup = document.createElement('optgroup');
+                periodOptgroup.label = 'Dönem Topicler';
+                
+                periodTopics.forEach(topic => {
+                    const option = document.createElement('option');
+                    option.value = topic;
+                    option.textContent = topic;
+                    periodOptgroup.appendChild(option);
+                });
+                
+                topicSelect.appendChild(periodOptgroup);
+            }
+            
+            // Token seçimini güncelle
+            function updateTokenSelect(users) {
+                const tokenSelect = document.getElementById('tokenSelect');
+                
+                // Önceki seçimleri temizle (ilk seçeneği koru)
+                while (tokenSelect.options.length > 1) {
+                    tokenSelect.remove(1);
+                }
+                
+                users.forEach(user => {
+                    if (user.token) {
+                        const option = document.createElement('option');
+                        option.value = user.token;
+                        option.textContent = user.email;
+                        option.dataset.userId = user._id || user.email;
+                        tokenSelect.appendChild(option);
+                    }
+                });
+            }
+            
+            // Kullanıcı detayını göster
+            function showUserDetail(userId, users) {
+                const user = users.find(u => (u._id || u.email) === userId);
+                
+                if (!user) {
+                    showToast('Kullanıcı bulunamadı!', 'warning');
+                    return;
+                }
+                
+                // Modal alanlarını doldur
+                document.getElementById('userEmail').value = user.email;
+                document.getElementById('userRoleTopic').value = user.roleTopic || '-';
+                document.getElementById('userPeriodTopic').value = user.periodTopic || '-';
+                document.getElementById('userToken').value = user.token || '-';
+                document.getElementById('userCreatedAt').value = formatDate(user.createdAt);
+                document.getElementById('userUpdatedAt').value = formatDate(user.updatedAt);
+                
+                // "Bu Kullanıcıya Bildirim Gönder" butonu için olay dinleyicisi
+                const sendToUserBtn = document.getElementById('sendToUserBtn');
+                sendToUserBtn.onclick = function() {
+                    // Modalı kapat
+                    bootstrap.Modal.getInstance(document.getElementById('userDetailModal')).hide();
+                    
+                    // Bildirim sekmesine geç ve kullanıcıyı seç
+                    document.getElementById('notifications-tab').click();
+                    
+                    // Token bazlı bildirim tipi seç
+                    document.getElementById('notificationType').value = 'token';
+                    // Tip seçimi değişikliğini tetikle
+                    document.getElementById('notificationType').dispatchEvent(new Event('change'));
+                    
+                    // Kullanıcıyı seç
+                    const tokenSelect = document.getElementById('tokenSelect');
+                    for (let i = 0; i < tokenSelect.options.length; i++) {
+                        if (tokenSelect.options[i].dataset.userId === userId) {
+                            tokenSelect.selectedIndex = i;
+                            break;
+                        }
+                    }
+                };
+                
+                // Modalı göster
+                const modal = new bootstrap.Modal(document.getElementById('userDetailModal'));
+                modal.show();
+            }
+            
+            // Bir kullanıcı için bildirim hazırla
+            function prepareNotificationToUser(userId, token, users) {
+                const user = users.find(u => (u._id || u.email) === userId);
+                
+                if (!user) {
+                    showToast('Kullanıcı bulunamadı!', 'warning');
+                    return;
+                }
+                
+                // Bildirim sekmesine geç
+                document.getElementById('notifications-tab').click();
+                
+                // Token bazlı bildirim tipi seç
+                document.getElementById('notificationType').value = 'token';
+                // Tip seçimi değişikliğini tetikle
+                document.getElementById('notificationType').dispatchEvent(new Event('change'));
+                
+                // Kullanıcıyı seç
+                const tokenSelect = document.getElementById('tokenSelect');
+                for (let i = 0; i < tokenSelect.options.length; i++) {
+                    if (tokenSelect.options[i].dataset.userId === userId) {
+                        tokenSelect.selectedIndex = i;
+                        break;
+                    }
+                }
+                
+                // Bildirim örneği hazırla
+                document.getElementById('notificationTitle').value = 'Merhaba';
+                document.getElementById('notificationBody').value = `Merhaba ${user.email.split('@')[0]}, bu bir test bildirimidir.`;
+                
+                // Sayfayı bildirim formuna kaydır
+                document.getElementById('notificationForm').scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            }
+            
+            // Bildirim geçmişini yükle
+            function loadNotificationHistory() {
+                fetch('/api/messages')
+                    .then(response => response.json())
+                    .then(messages => {
+                        const historyTable = document.getElementById('historyTableBody');
+                        
+                        // Tabloyu temizle
+                        historyTable.innerHTML = '';
+                        
+                        if (messages.length === 0) {
+                            historyTable.innerHTML = '<tr><td colspan="6" class="text-center">Bildirim geçmişi bulunamadı</td></tr>';
+                            return;
+                        }
+                        
+                        // Bildirim geçmişini doldur
+                        messages.forEach(message => {
+                            const row = document.createElement('tr');
+                            
+                            let statusBadge = '<span class="badge bg-success status-badge">Gönderildi</span>';
+                            if (message.error) {
+                                statusBadge = '<span class="badge bg-danger status-badge">Hata</span>';
+                            }
+                            
+                            row.innerHTML = `
+                                <td class="timestamp">${formatDate(message.sentAt)}</td>
+                                <td><span class="badge bg-secondary">${message.type}</span></td>
+                                <td>${truncateText(message.target, 20)}</td>
+                                <td>${truncateText(message.title, 30)}</td>
+                                <td>${truncateText(message.body, 30)}</td>
+                                <td>${statusBadge}</td>
+                            `;
+                            
+                            historyTable.appendChild(row);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Bildirim geçmişi hatası:', error);
+                        document.getElementById('historyTableBody').innerHTML = 
+                            `<tr><td colspan="6" class="text-center text-danger">Hata: ${error.message}</td></tr>`;
+                    });
+            }
+            
+            // Sayfa olayları
+            
+            // Sistem durumu yenileme
+            document.getElementById('refreshStatusBtn').addEventListener('click', getSystemStatus);
+            
+            // Kullanıcı listesi yenileme
+            document.getElementById('refreshUsersBtn').addEventListener('click', loadUsersList);
+            
+            // Bildirim geçmişi yenileme
+            document.getElementById('refreshHistoryBtn').addEventListener('click', loadNotificationHistory);
+            
+            // Bildirim tipi değişikliği
+            document.getElementById('notificationType').addEventListener('change', function() {
+                const type = this.value;
+                document.getElementById('tokenSelectContainer').style.display = type === 'token' ? 'block' : 'none';
+                document.getElementById('topicSelectContainer').style.display = type === 'topic' ? 'block' : 'none';
+            });
+            
+            // Bildirim formu gönderimi
+            document.getElementById('notificationForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                const type = document.getElementById('notificationType').value;
+                let target;
+                
+                if (type === 'token') {
+                    target = document.getElementById('tokenSelect').value;
+                    if (!target) {
+                        showToast('Lütfen bir kullanıcı seçin', 'warning');
+                        return;
+                    }
+                } else if (type === 'topic') {
+                    target = document.getElementById('topicSelect').value;
+                    if (!target) {
+                        showToast('Lütfen bir topic seçin', 'warning');
+                        return;
+                    }
+                } else {
+                    showToast('Lütfen bir bildirim tipi seçin', 'warning');
+                    return;
+                }
+                
+                const title = document.getElementById('notificationTitle').value;
+                const body = document.getElementById('notificationBody').value;
+                let data = {};
+                
+                // JSON verisini işle
+                const dataField = document.getElementById('notificationData').value;
+                if (dataField.trim()) {
+                    try {
+                        data = JSON.parse(dataField);
+                    } catch (error) {
+                        showToast('Ekstra veri geçerli bir JSON formatında olmalıdır', 'danger');
+                        return;
+                    }
+                }
+                
+                // Bildirim verisini hazırla
+                const notificationData = {
+                    type,
+                    target,
+                    title,
+                    body,
+                    data
+                };
+                
+                // Socket.IO ile bildirim gönder
+                socket.emit('send-notification-request', notificationData);
+                
+                showToast('Bildirim gönderiliyor...', 'info');
+            });
+            
+            // Sekme değişikliği olayları
+            document.getElementById('history-tab').addEventListener('shown.bs.tab', function (e) {
+                loadNotificationHistory();
+            });
+            
+            // İlk yükleme
+            getSystemStatus();
+            loadUsersList();
+            
+            // 1 dakikada bir otomatik durumu yenile
+            setInterval(getSystemStatus, 60000);
+        });
+    </script>
+</body>
+</html>
